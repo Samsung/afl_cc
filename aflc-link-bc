@@ -1,0 +1,93 @@
+#!/bin/sh
+
+LIB_DIR="$( cd "$(dirname "$0")" ; pwd -P )"
+. $LIB_DIR/library.sh
+. $LIB_DIR/afl-config.sh
+
+if [ -z "$LLVM_CONFIG" ]; then
+	fatal "LLVM_CONFIG not defined"
+fi
+
+VERSION=$($LLVM_CONFIG --version)
+VERSION_38=$(echo $VERSION | grep '3\.8')
+if [ -z "$VERSION_38" ]; then
+	fatal "LLVM_VERSION points to wrong version:\n${VERSION}\n\nWe need version 3.8"
+fi
+
+ARGS=$@
+ARGS=`echo $ARGS | sed -e 's/-O[^ ]*/-O0/g'`
+
+
+# get the output name
+prev_is_o=0
+out_fn_bc=""
+list_files=""
+for arg in $ARGS; do
+	if [ $arg = "-o" ]; then
+		prev_is_o=1
+	elif [ $prev_is_o -eq 1 ]; then
+		out_fn_bc=$arg
+	elif file_exists $arg; then
+
+		last_four_character=$(echo -n "$arg" | tail -c 4)
+		if [ "$last_four_character" = ".bca" ]; then
+
+			list=$($LLVM_AR tv $arg| awk '{print $6}')
+			if [ -z "$list" ]; then
+				fatal "the archive is empty"
+			fi
+
+
+			for fn in $list; do
+				
+				# check there is no duplicated files in different archives
+				for fm in $list_files; do
+					if [ "$fm" = "$fn" ]; then
+						fatal "Duplicated files '$fm'"
+					fi
+				done
+				# delete the file
+				rm $fn >/dev/null
+			done
+
+			$LLVM_AR x $arg
+
+			# sanity check the files are extracted
+			for fn in $list; do
+				if ! file_exists $fn; then
+					fatal "file $fn does not exist"
+				fi
+			done
+
+			list_files="$list_files $list"
+		else
+			list_files="$list_files $arg"
+		fi
+	fi
+done
+
+if [ -z "$out_fn_bc" ]; then
+	fatal "output file is missing"
+fi
+
+last_three_character=$(echo -n "$out_fn_bc" | tail -c 3)
+if [ "$last_three_character" != ".bc" ]; then
+	fatal "Invalid output file ($out_fn_bc). Must end in .bc"
+fi
+
+
+# link
+run_command "Linking..." $LLVM_LINK $list_files -o $out_fn_bc
+
+# run opt on the entire program
+run_command "Running opt..." $OPT $OPT_ARGS $out_fn_bc -o $out_fn_bc
+
+
+length=$(echo -n $out_fn_bc | wc -c)
+length=$((length-3))
+out_fn=$(echo -n $out_fn_bc | head -c $length)
+
+echo
+ok_echo "Success :)"
+echo -n "Run:"
+ok_echo " /path/to/afl/aflc-clang-fast $out_fn_bc -o $out_fn <additional LDFLAGS>"

@@ -1,0 +1,26 @@
+To edit the code locally use the repository here:
+
+~/go/src/github.com/SRI-CSL/gllvm
+
+Then do:
+
+go install github.com/SRI-CSL/gllvm/cmd/...
+
+
+To format for the badge:
+
+gofmt -s -w shared/*.go cmd/*/*.go
+
+
+For linting:
+
+https://github.com/alecthomas/gometalinter
+
+gometalinter.v2 ./...
+
+
+For keeping up with the Jones:
+
+clang -cc1 --help
+
+https://clang.llvm.org/docs/ClangCommandLineReference.html

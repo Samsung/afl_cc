@@ -1,0 +1,170 @@
+#!/bin/sh
+
+LIB_DIR="$( cd "$(dirname "$0")" ; pwd -P )"
+. $LIB_DIR/library.sh
+. $LIB_DIR/afl-config.sh
+
+### code for supporting optimization ###
+### I've removed it because it's dangerous AND it only marginally improves performance
+# get output filename
+# if [ "$#" -gt 2 -o "$#" -eq 0 ]; then
+#     err "Incorrect number of parameters"
+#     err "Usage: sh $0 <optional:-OL> /path/to/exe"
+#     err "Example: sh $0 -O2 readelf" 
+#     err "Example: sh $0 readelf" 
+#     exit 0
+# fi
+
+# # get the optiomization level
+# if [ "$#" -eq 2 ]; then
+# 	OPT_LEVEL=`echo $@ | egrep -o '\-O[^ ]*'`
+# 	EXE=$2
+# else
+# 	EXE=$1
+# 	O=`echo $EXE | egrep -o '\-O[^ ]*'`
+# 	if [ "$O" = "$EXE" ]; then
+# 		err "Missing filename"
+# 		exit 0
+# 	fi
+# fi
+
+# get output filename
+if [ "$#" -ne 1 ]; then
+    err "Incorrect number of parameters"
+    err "Usage: sh $0 /path/to/exe"
+    err "Example: sh $0 readelf" 
+    exit 0
+fi
+
+if [ -z "$LLVM_CONFIG" ]; then
+	fatal "LLVM_CONFIG not defined"
+fi
+
+VERSION=$($LLVM_CONFIG --version)
+VERSION_38=$(echo $VERSION | grep '3\.8')
+if [ -z "$VERSION_38" ]; then
+	fatal "LLVM_VERSION points to wrong version:\n${VERSION}\n\nWe need version 3.8"
+fi
+
+EXE=$1
+
+if [ ! -f $EXE ]; then
+	fatal "File '$EXE' does not exist"
+fi
+
+DIR=$(get_dir_of_file $EXE)
+#EXE=$(get_fn_from_file $EXE)
+
+
+two_last_character=$(echo -n "$EXE" | tail -c 2)
+IS_ARCHIVE=0
+if [ "$two_last_character" = ".a" ]; then
+	IS_ARCHIVE=1
+	fn=$(echo $EXE | rev | cut -c 3- | rev)
+	EXE_BC="$fn.bca"
+else
+	EXE_BC="$EXE.bc"
+fi
+
+rm $EXE_BC > /dev/null 2>&1
+
+# extract the bc
+export LLVM_COMPILER_PATH=`$LLVM_CONFIG --bindir`
+run_command "Extracting .bc file" $LIB_DIR/get-bc $EXE
+
+if [ ! -f $EXE_BC ]; then
+	fatal "File could not be generated"
+fi
+
+# run opt. Above all don't use . Note sure if we should use -mergefunc
+# For the list of passes available, see https://llvm.org/docs/Passes.html
+# there is certainly room for improvement to speed up the binary:TODO
+# -gvn -sccp -globaldce -dce -die -dse -ipconstprop -deadargelim 
+# -gvn -ipsccp -ipconstprop -sccp -dce
+# -instcombine -constmerge -globalopt -memcpyopt -mergefunc 
+# -constmerge -constprop
+# WARNING: be very careful when selecting these, they may affect the assumptions we make in the LLVM passes...
+# passing -disable-simplify-libcalls is important. Without this option, LLVM will transform strcat/etc into a memcpy()
+# But we need the function names for pass strings-in-calls.so.cc
+# -mergereturn sort of screws up the mapping BB <-> src... really??
+# Do we need to remove unreachable BB?  http://llvm.org/doxygen/UnreachableBlockElim_8cpp_source.html
+# Probably not necessary ...
+
+
+if [ "$OPT_LEVEL" = "" -o "$OPT_LEVEL" = "-O0" ]; then
+	# Note: not sure -dse and -die will do anything without -tbaa -basicaa. Why is is not crashing if dependency is not met?
+	# see discussion https://groups.google.com/forum/#!topic/llvm-dev/KIyR-FN7-h4
+	# -inline -instcombine does some amount of -wholeprogramdevirt
+	# this code is available if we need it later. Currently it was just an experiment :)
+	# -load $LIB_DIR/afl-llvm-aa.so -afl-aa for using LLM's default alias analysis. Not used
+
+	# this is disabled. Set to 1 to enable
+	# this will use DSA to find out targets of indirect calls. During coverage build
+	# only indirect calls' targets will have their first BB instrumented to compute en edge
+	# currently disabled because DSA may fail to find out all potential targets...
+	ENABLE_DSA=0
+	
+	# -mergereturn is needed for coverage build, so a BB with a call instruction and multiple succ does not generate artificial edges if ret of callee changes
+	# without this option, we'll need to reset the BBid after each call and invokeinst. For invokeinst we'll need to ensure that their landing pad has a single predecessor (otherwise we don't know what invokeinst they correspond to)
+	# this is not defined in afl-config.sh
+
+	# OPT_ARGS="-internalize -internalize-public-api-list=main -globaldce -deadargelim -dse -die -argpromotion -disable-simplify-libcalls -inline -instcombine -loop-deletion -loop-unswitch -lowerswitch -memcpyopt -mem2reg -mergereturn"
+	# OPT_ARGS_ARCHIVE="-globaldce -deadargelim -dse -die -argpromotion -disable-simplify-libcalls -inline -instcombine -loop-deletion -loop-unswitch -lowerswitch -memcpyopt -mem2reg -mergereturn"
+
+	if [ $ENABLE_DSA -ne 0 ]; then
+		OPT_ARGS="$OPT_ARGS -load $LIB_DIR/dsa/LLVMDataStructure.so -calltarget-td -load $LIB_DIR/dsa/AssistDS.so"
+		OPT_ARGS_ARCHIVE="$OPT_ARGS_ARCHIVE -load $LIB_DIR/dsa/LLVMDataStructure.so -calltarget-td -load $LIB_DIR/dsa/AssistDS.so"
+	fi
+else
+	# this path is currently never taken
+	exit 255
+
+	# this is not taken as I have removed the code to call it, ie top of file
+	OPT_ARGS=`$LLVM_AS < /dev/null | $OPT $OPT_LEVEL -disable-output -debug-pass=Arguments 2>&1`
+	# I remove -gvn pass because it seems necessary to disable mask optimization done by -instcombine
+	# I'd rather disable the mask stuff/vector optimisation, but I cannot unless I patch LLVM code?
+	OPT_ARGS=`echo "-internalize -internalize-public-api-list=main -globaldce -deadargelim -dse -die -lowerswitch -disable-simplify-libcalls $OPT_ARGS" | sed 's/Pass Arguments://g' | sed 's/-simplifycfg//g' | sed 's/-gvn//g'` 
+fi
+
+# if we extract an archive, we extract each file and run opt, then repackeg the archive
+if [ $IS_ARCHIVE -eq 1 ]; then
+
+	list=$($LLVM_AR tv $EXE_BC | awk '{print $6}')
+	if [ -z "$list" ]; then
+		fatal "the archive is empty"
+	fi
+
+	for fn in $list; do
+		rm $fn >/dev/null
+	done
+
+	run_command "Extracting archive" $LLVM_AR x $EXE_BC
+
+	for fn in $list; do
+		if ! file_exists $fn; then
+			fatal "file $fn does not exist"
+		fi
+
+		# launch opt on the file
+		$OPT $OPT_ARGS_ARCHIVE $fn -o $fn
+	done
+
+	# we've run opt, now repacke the archive
+	rm $EXE_BC
+
+	run_command "Re-packaging archive" $LLVM_AR rc $EXE_BC $list
+
+else
+	$OPT $OPT_ARGS $EXE_BC -o $EXE_BC
+fi
+
+#run_command "Running opt $OPT_LEVEL" $OPT $OPT_ARGS $EXE.bc -o $EXE.bc
+ 
+echo
+ok_echo "Success :)"
+if [ $IS_ARCHIVE -eq 1 ]; then
+	ok_echo " Use /path/to/afl/afl-link-bc $EXE_BC to create the final .bc along with the executable.bc"
+else
+	echo -n "Run:"
+	ok_echo " /path/to/afl/afl-bcclang-fast $EXE_BC -o $EXE <additional LDFLAGS>"
+fi

@@ -1,0 +1,21 @@
+- mem2reg should work
+- array {} of any size *not* 1,2,4,8 should be added to dictionary if followed by memcmp/strcmp/etc
+- array {} of size 1,2,4,8 should work
+example: unsigned char arr[] = {0xAA, 0xAA, 0xCC, 0xDD, 0xEE, 0xFF, 0x00 };
+		 if ( !memcmp(hello, arr, sizeof(arr)) ) 
+
+		 -> handled in strcompare-to-unit.so.cc
+
+- 0,1 magic values should not be broken down into small comparison for equalities
+- 0,1,-1 should not be broekn blabla for ine and call results
+- u8 a == 0xCC
+	-> dictionary should have 1-byte value, not 4 bytes because of integer promotion
+		handled by -instcombine
+	-> should not be broken down because of integer prmotion
+		handle by -instcombine
+- switch statement
+	handled by -lowerswitch
+- libs strcat, etc should be able to *not* be added to dictionary
+	handled in strcompare-to-unit.so.cc
+	handled by -disable-simplify-libcalls to not optimize this into memcpy()
+	TODO: add memcmpy() ad test again 

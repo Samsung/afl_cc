@@ -1,0 +1,253 @@
+#!/bin/sh
+
+LIB_DIR="$( cd "$(dirname "$0")" ; pwd -P )"
+. $LIB_DIR/library.sh
+
+# the file where we write flags for the clang rewriters
+COMPILE_FLAGS_FN=compile_flags.txt
+
+rm_compile_flag_file()
+{
+	rm "$@" >/dev/null 2>&1
+}
+
+err_exit()
+{
+	err "$@"
+	exit 1
+}
+
+if [ -z "$LLVM_CONFIG" ]; then
+	fatal "LLVM_CONFIG not defined"
+fi
+
+# needed to find clang libs, eg libclangTooling.so
+export LLVM_SRC_DIR=`$LLVM_CONFIG --obj-root`
+export LD_LIBRARY_PATH=`$LLVM_CONFIG --libdir`
+
+# Note: -p is for finding the json-compilation-database, see https://clang.llvm.org/docs/LibTooling.html
+# I've not looked in details, but this seems to work just fine
+# -p $LLVM_SRC_DIR
+
+rewriter=`basename $0`
+
+# 0. set the filename to be random
+# this is important, especially for multi-threaded/process compilation, eg make -jN
+# Note: the file must be in the directory of the source file. We do that later
+PID=`echo $$`
+CFN=$PWD/$COMPILE_FLAGS_FN.$PID
+if regular_file_exists $CFN; then
+	err_exit "file $CFN already exists!"
+fi
+
+# LOG=$PWD/log.$PID
+# if regular_file_exists $LOG; then
+# 	err_exit "file $LOG already exists!"
+# fi
+
+# 1. set the compiler and include path
+if [ $rewriter = "run_rewriters" ]; then
+
+	# thank you! https://stackoverflow.com/questions/19642590/libtooling-cant-find-stddef-h-nor-other-headers/23314921#23314921
+	# set system header include for C
+	CLANG=`$LLVM_CONFIG --bindir`/clang
+	list_headers_c=`$CLANG -E -x c - -v 2>&1 < /dev/null | sed -n '/include <...> search starts here:/,/End of search list/p' | sed 's/#include <...> search starts here://g' | sed 's/End of search list.//g'` 
+	for h in $list_headers_c; do
+		if [ -z $C_INCLUDE_PATH ]; then
+			C_INCLUDE_PATH="$h"
+		else
+			C_INCLUDE_PATH="$C_INCLUDE_PATH:$h"
+		fi
+		
+	done 
+
+	export C_INCLUDE_PATH
+	echo $CLANG >> $CFN
+	unset CLANGPP
+
+elif [ $rewriter = "run_rewriters++" ]; then
+
+	# set system header include for C++
+	CLANGPP=`$LLVM_CONFIG --bindir`/clang++
+	list_headers_cpp=`$CLANGPP -E -x c - -v 2>&1 < /dev/null | sed -n '/include <...> search starts here:/,/End of search list/p' | sed 's/#include <...> search starts here://g' | sed 's/End of search list.//g'` 
+	for h in $list_headers_cpp; do
+		if [ -z $CPLUS_INCLUDE_PATH ]; then
+			CPLUS_INCLUDE_PATH="$h"
+		else
+			CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH:$h"
+		fi
+		
+	done 
+
+	export CPLUS_INCLUDE_PATH
+	echo $CLANGPP >> $CFN
+	unset CLANG
+
+else
+	fatal "Invalid filename '$rewriter'"
+fi
+
+# 2. set the flags - filter out source file, output file and -o
+prev_is_o=0
+hasE=0
+list_args=""
+
+for arg in "$@"; do
+
+	if test "$arg" = "-E"; then
+		hasE=1
+	elif test "$arg" = "-o"; then
+		prev_is_o=1
+	elif [ $prev_is_o -eq 1 ]; then
+		prev_is_o=0
+	elif ! regular_file_exists $arg; then
+	 	echo $arg >> $CFN
+		list_args="$list_args $arg"
+	else
+		# it's a file
+		echo $arg | tr '[:upper:]' '[:lower:]' | grep -qE "([.]c|[.]h|[.]cc|[.]cxx|[.]cpp|[.]c[+]{2}|[.]hpp|p[.]hh|[.]h[+]{2}|p[.]hh)$"
+		ret=$?
+		if [ $ret -eq 0 ]; then
+			# make sure there's only one file. TODO: support multiple files
+			if [ ! -z $file ]; then
+				rm_compile_flag_file $CFN; 
+				err_exit "file already found"
+			fi
+			file=`get_full_path_of_file "$arg"`
+		else
+			# add the file, whatever this might be
+			list_args="$list_args $arg"
+		fi
+		
+	fi
+done
+
+
+# mv the temp file under the source file's directory
+# FP=`get_full_path_of_file $file`
+# DIR=`get_dir_of_file $FP`
+# CFN=$DIR/$COMPILE_FLAGS_FN.$PID
+# if [ "$DIR" != "$PWD" ]; then
+# 	mv $TFN $CFN || err_exit "Cannot mv $TFN $CFN"
+# fi
+
+# 1. only process source code if we have source files
+# 	 nothing to do if it linking .o files
+# 2. cmake will use files such as /path/to/installation/Modules/*.c(pp), eg CMakeCCompilerABI.c
+# 	 to test the compiler. Unfortunately, if the file is not writable, clang-format will crash with seg fault :(
+# 	 so I try to make the file writable, and if this fails I bail out.
+# 3. -E means only use pre processor, so we do nothing in this case
+
+# adding braces with our custom macro_rewriter is not completely supported. It works on most programs, but
+# fails on some, eg libjpeg. Currently function InstrumentStmt() fails if there is code that looks like:
+# a = b /* comment */;
+# I tried with clang-tidy with little luck
+# so we no longer add braces around statements
+
+
+if [ $hasE -eq 0 ] && [ ! -z $file ] && chmod a+r $file ; then
+	
+	# expands MACROs using the preprocessor. Do this only once
+	#$LIB_DIR/clang_rewriters/macro_rewriter -comments=false -cdb=$CFN $file || { rm_compile_flag_file $CFN; err_exit "macro_rewriter"; }
+	line=$(head -n 1 $file)
+	if test "$line" != "// @NORMALIZE: DONE" ; then
+
+		# We don't need this -dD to include macro definitions in the output
+		# Note -CC will keep comments, including in system headers...
+		$CLANG $CLANGPP -E $list_args $file -o $file || { rm_compile_flag_file $CFN; err_exit "clang -E"; }
+		# record we've expanded macros
+		sed -i '1s/^/\/\/ @NORMALIZE: DONE\n/' $file
+	
+
+		# fix indentations, remove spaces before ';', alignoperands, etc
+		CLANG_FORMAT=`$LLVM_CONFIG --bindir`/clang-format
+		if ! regular_file_exists $CLANG_FORMAT; then
+			err_exit "$CLANG_FORMAT does not exist"
+		fi
+
+		# last thing: remove all lines that start with #, because these reset the line numbers
+		# Note: the fix I introduce in clang-format ColumnLimitNLB may lead to # balbla ); if there are macros
+		# included from other files. That's why we remove those # before before invoking clang-format
+		sed -i '/^#/ d' $file
+
+		# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+		# see url above for style definition
+		
+		# set ColumnLimit to 0 to avoid broken lines. This creates problems with AlignOperands. 
+		# I tried giving ColumnLimit=9999 but clang-format chokes on some files: it goes into an infinite loop with
+		# calls to brk()
+		# so instead I have patched clang-format with ColumnLimitNLB option: this forces it to remove line breaks
+		# even when ColumnLimit=0 (the default behavior is to just copy the original code)
+		# do not sort include order, as this messes up some projects
+		# clangformat also breaks lines after statements, eg if/for/while
+		# Note: BreakBeforeTernaryOperators: true is not necessary here, because normalize_writer does it
+		# Note: AlignOperands: true is the default for llvm, so not actually necessary
+		$CLANG_FORMAT -i -style="{BasedOnStyle: llvm, ColumnLimit: 0, ColumnLimitNLB: true, SortIncludes: false, AlignOperands: true, BreakBeforeTernaryOperators: true}" $file || { rm_compile_flag_file $CFN;  err_exit "clang-format (1)"; }
+		
+		# Note: AlignOperands seems to not work consistently
+		# 1. make sure we're using unix \n
+		awk 'BEGIN{RS="\1";ORS="";getline;gsub("\r","");print>ARGV[1]}' $file
+		# 2. remove spaces to make things simple for * - + */
+		# sed -i 's/-[ ]*-/--/g' $file
+		# sed -i 's/+[ ]*+/++/g' $file
+		# sed -i 's/*[ ]*/**/g' $file THIS is wrong: need hex of *
+		#sed -i ':a;N;$!ba;s/*\([ ]*\)\n/*\1\/\n/g' $file # this adds a / if the last character is *. ex // comment *** -> // comment ***/
+		#sed -i 's/*[ ]*\//*\//g' $file # this removes space between * and /
+		# 3. fix + - * >> occurence at the end of a line. also ensure the first non-space character on the next line is not #
+		
+		# WARNING: old code to fix AlignOperands. This seems to be due to ColumnLimit: 0. So instead, now, I use ColumnLimit: 99999999
+		# sed -i ':a;N;$!ba;s/[^+*=-]+\([ ]*\)\n\([^#]\)/+\1\2/g' $file # not preceded by + or + * = -, those are likely to appear in comments
+		# sed -i ':a;N;$!ba;s/[^+*=-]-\([ ]*\)\n\([^#]\)/-\1\2/g' $file # not preceded by + or + * = -, those are likely to appear in comments
+		# sed -i ':a;N;$!ba;s/*\([ ]*\)\n\([^#]\)/*\1\2/g' $file
+		# sed -i ':a;N;$!ba;s/>>\([ ]*\)\n\([^#]\)/>>\1\2/g' $file
+
+		# # 4. replace / only if not preceded by * or /
+		# # Note: step 2 ensures */ never contains a space between '*' and '/'
+		# # fix occurences at the end. also ensure the first non-space character on the next line is not #
+		# sed -i ':a;N;$!ba;s/[^(*/)]\/[ ]*\n/\/ /g' $file
+		# # 4. fix | & occurences at the end. also ensure the first non-space character on the next line is not #
+		# sed -i ':a;N;$!ba;s/\([^\x7c]\)\([ ]*\)\x7c\n\([^#]\)/\1\2\3\x7c/g' $file # x7c = '|'
+		# sed -i ':a;N;$!ba;s/\([^\x26]\)\([ ]*\)\x26\n\([^#]\)/\1\2\3\x26/g' $file # x26 = '&'
+		# # 5. fix << occurences at the start
+		# sed -i ':a;N;$!ba;s/[ ]*\n[ ]*<</<</g' $file
+		# end WARNING
+
+		# I give up on clang-tidy: it's not reliable on all source code
+		# it may crash, or corrupt the file... :(
+		# I encountered most of the problems when compiling binutils
+		# we'll do without braces...
+		# # use clang-tidy to add braces around statement. clang-format is capabable of addind lines, but not the braces...
+		# CLANG_TIDY=`$LLVM_CONFIG --bindir`/clang-tidy
+		# if ! regular_file_exists $CLANG_TIDY; then
+		# 	err_exit "$CLANG_TIDY does not exist"
+		# fi
+
+		# $CLANG_TIDY $file -fix -checks="readability-braces-around-statements" -- $list_args #|| { rm_compile_flag_file $CFN; err_exit "clang-tidy"; }
+
+		# # fix clang-tidy bug: the closing brace becomes }# instead of having each on a different line
+		# #	if (p != 0)
+		# #	return "exists";
+		# ##if 1
+		# #	++p;
+		# # #endif
+		# sed -i 's/}#/}\n\n#/g' $file
+
+		# normalize everything else, adding {} and new lines between operators, etc
+
+		$LIB_DIR/clang_rewriters/normalize_rewriter -cdb=$CFN $file  || { rm_compile_flag_file $CFN; err_exit "normalize_rewriter"; }
+
+		# clean the identation - not necessray but gives cleaner code
+		# set ColumnLimit to 0 to avoid new lines dues to our passes' added comments
+		# do not sort include order, as this messes up some projects
+		# Note: BreakBeforeTernaryOperators: false IS necessary here. Without it it will undo our select instrumentation, if comments=false
+		# Note: AlignOperands: false IS necessary. Wihtout it it will undo some instrumentations, if comments=false
+		# WARNING: here we need ColumnLimit: 0, or it will undo the condition breaks of our custom pass
+		
+		$CLANG_FORMAT -i -style="{BasedOnStyle: llvm, ColumnLimit: 0, ColumnLimitNLB: false, SortIncludes: false, AlignOperands: false, BreakBeforeTernaryOperators: false}" $file || { rm_compile_flag_file $CFN;  err_exit "clang-format (2)"; }
+	fi
+fi
+
+# remove the temp flag file
+rm_compile_flag_file $CFN
+
+exit 0

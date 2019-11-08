@@ -1,0 +1,664 @@
+#include "clang/AST/AST.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/ASTConsumers.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendActions.h"
+#include "clang/Rewrite/Core/Rewriter.h"
+#include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/Tooling.h"
+#include "clang/Lex/HeaderSearchOptions.h"
+#include "clang/Lex/Lexer.h"
+#include "clang/Lex/Preprocessor.h"
+#include "clang/Lex/TokenConcatenation.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/LineIterator.h"
+#include "clang/Tooling/CompilationDatabasePluginRegistry.h"
+
+#include <sstream>
+#include <string>
+
+#include "common.h"
+
+#define TOOL_NAME "Macro"
+
+using namespace clang;
+using namespace clang::driver;
+using namespace clang::tooling;
+using namespace llvm;
+
+// https://clang.llvm.org/doxygen/classclang_1_1tooling_1_1CommonOptionsParser.html
+static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
+cl::OptionCategory MyToolCategory(TOOL_NAME " rewriter options");
+static cl::opt<bool> Comments("comments", 
+								cl::desc("Add comments to normalised code"), 
+								cl::Required,
+								cl::cat(MyToolCategory));
+
+/*
+	Inspired by https://github.com/loarabia/Clang-tutorial/blob/master/CIrewriter.cpp
+
+	case 1:
+		#define select(c,t,f) (c) ? (t) : (f)
+
+	case 2:
+		#define xstr(a) str(a)
+		#define str(a) #a
+
+	case 3:
+		#define ONE 1
+		#define ZERO 0
+		#define GLUE_HELPER(x, y) x##y
+		#define GLUE(x, y) GLUE_HELPER(x, y)
+
+		GLUE(foo,ZERO)(5);    
+  
+  	case 4:
+  		same as case 3, but BLA is defined as compilation arguments
+  			-> test compile_flags.txt and compile_commands.json
+  		GLUE(foo,ONE)(BLA);
+
+  	case 5:
+  		#if BLA // BLA defined in test compile_flags.txt and compile_commands.json
+*/
+
+
+class MyMacroInfo {
+
+	public:
+		virtual ~MyMacroInfo() {}
+		MyMacroInfo(std::string filename, unsigned lineNo, unsigned colNo) {
+			_tuple = std::make_tuple(filename, lineNo, colNo);
+		}
+
+		/* comparison operators */
+		friend bool operator== (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return (mi1._tuple == mi2._tuple);
+		}
+
+		friend bool operator!= (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return !(mi1 == mi2);
+		}
+
+		friend bool operator> (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return (mi1._tuple > mi2._tuple);
+		}
+
+		friend bool operator< (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return (mi1._tuple < mi2._tuple);
+		}
+
+		friend bool operator<= (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return !(mi1 > mi2);
+		}
+
+		friend bool operator>= (const MyMacroInfo &mi1, const MyMacroInfo &mi2) {
+			return !(mi1 < mi2);
+		}
+
+		/* getters */
+		std::string get_filename() { return std::get<0>(_tuple); }
+		unsigned get_line() { return std::get<1>(_tuple); }
+		unsigned get_column() { return std::get<2>(_tuple); }
+
+	private:
+		std::tuple< std::string /*filename*/, 
+					unsigned/*line number*/, 
+					unsigned/*column number*/> _tuple;
+};
+
+typedef std::map<MyMacroInfo, std::string /*original code*/> MacroExpansionMap_t;
+
+class Utils {
+	public:
+		// macro https://lists.llvm.org/pipermail/cfe-dev/2017-August/055079.html
+		static MyMacroInfo getMacroInfo(const SourceManager & SM, SourceLocation SL) {
+			ASSERT (SL.isValid());
+			if(!SL.isFileID()) {
+				SL = SM.getExpansionLoc(SL); ASSERT (SL.isValid());
+				ASSERT(SL.isFileID());
+			}
+			PresumedLoc PLoc = SM.getPresumedLoc(SL); ASSERT(PLoc.isValid());
+			std::string filename = PLoc.getFilename();
+			unsigned lineNo = PLoc.getLine();
+			unsigned colNo = PLoc.getColumn();
+			return MyMacroInfo(filename, lineNo, colNo);
+		}
+
+		static void replaceAll( std::string &s, const std::string &search, const std::string &replace ) {
+			for( size_t pos = 0; ; pos += replace.length() ) {
+				// Locate the substring to replace
+				pos = s.find( search, pos );
+				if( pos == std::string::npos ) break;
+				// Replace by erasing and inserting
+				s.erase( pos, search.length() );
+				s.insert( pos, replace );
+			}
+		}
+};
+
+/* By implementing RecursiveASTVisitor, we can specify which AST nodes
+   we're interested in by overriding relevant methods.
+*/
+class MyASTVisitor : public RecursiveASTVisitor<MyASTVisitor> {
+	public:
+		MyASTVisitor(MacroExpansionMap_t & MAP, Rewriter &RW) : _MAP(MAP), _RW(RW) {}
+
+		bool VisitStmt(Stmt *s) {
+
+			SourceManager & SM = _RW.getSourceMgr();
+
+			/* Do not update system files/header */
+			if (SM.isInSystemHeader(s->getLocStart())) {
+				return true;
+			}
+
+			/* We want only the MACRO expansions */
+			if (!Lexer::isAtStartOfMacroExpansion(s->getLocStart(), SM, _RW.getLangOpts())) {
+				return true;
+			}
+
+	 		CharSourceRange CSR = CharSourceRange::getTokenRange(s->getLocStart(),s->getLocEnd());
+	  		std::string SrcText = Lexer::getSourceText(CSR, SM, _RW.getLangOpts());
+
+	  		/* Do not expand the NULL/std* macro */
+			if (SrcText == "NULL" || SrcText == "stdin" || SrcText == "stdout" || SrcText == "stderr") {
+				return true;
+			}
+
+			MyMacroInfo MI = Utils::getMacroInfo(SM, s->getLocStart());
+
+			if (!SrcText.empty()) {
+				/* If new text, add it */
+				if (!_MAP.count(MI)) {
+					_MAP[MI] = SrcText;
+				} else {					
+					/* sanitity check: the existing text must start with this text.
+					Most of the time it starts with SrcText */
+					ASSERT(_MAP[MI].find(SrcText) != std::string::npos);
+					//ASSERT(_MAP[MI].rfind(SrcText, 0) == 0);
+				}
+			}
+	  		
+			return true; // returning false aborts the traversal
+		}
+
+	private:
+		MacroExpansionMap_t & _MAP;
+		Rewriter & _RW;
+};
+
+
+/* Implementation of the ASTConsumer interface for reading an AST produced
+   by the Clang parser.
+*/
+class MyASTConsumer : public ASTConsumer {
+	public:
+		MyASTConsumer(MacroExpansionMap_t & MAP, Rewriter & RW, Preprocessor & PP) : _MAP(MAP), _RW(RW), _PP(PP), _Visitor(MAP, RW) {}
+
+		/* Override the method that gets called for each parsed top-level declaration */
+		bool HandleTopLevelDecl(DeclGroupRef DR) override {
+			for (DeclGroupRef::iterator b = DR.begin(), e = DR.end(); b != e; ++b) {
+				/* Traverse the declaration using our AST visitor */
+				_Visitor.TraverseDecl(*b);
+				//(*b)->dump();
+			}
+			return true;
+		}
+
+		void HandleTranslationUnit(ASTContext &Ctx) override {
+			
+			/* Code mostly taken from clang/lib/Rewrite/HTMLRewrite.cpp SyntaxHighlight() */
+			const SourceManager &SM = _PP.getSourceManager();
+			std::vector<Token> TokenStream;
+
+			FileID FID = _RW.getSourceMgr().getMainFileID();
+			const llvm::MemoryBuffer *FromFile = SM.getBuffer(FID);
+			Lexer L(FID, FromFile, SM, _PP.getLangOpts());
+
+			// Lex all the tokens in raw mode, to avoid entering #includes or expanding
+			// macros.
+			while (1) {
+				Token Tok;
+				L.LexFromRawLexer(Tok);
+
+				// If this is a # at the start of a line, discard it from the token stream.
+				// We don't want the re-preprocess step to see #defines, #includes or other
+				// preprocessor directives.
+				if (Tok.is(tok::hash) && Tok.isAtStartOfLine())
+					continue;
+
+				// If this is a ## token, change its kind to unknown so that repreprocessing
+				// it will not produce an error.
+				if (Tok.is(tok::hashhash))
+					Tok.setKind(tok::unknown);
+
+				// If this raw token is an identifier, the raw lexer won't have looked up
+				// the corresponding identifier info for it.  Do this now so that it will be
+				// macro expanded when we re-preprocess it.
+				if (Tok.is(tok::raw_identifier))
+					_PP.LookUpIdentifierInfo(Tok);
+
+				TokenStream.push_back(Tok);
+
+				if (Tok.is(tok::eof)) break;
+
+				//SourceLocation SrcLoc = Tok.getLocation();
+				//SrcLoc.dump(R.getSourceMgr()); errs() << "\n";
+				//errs() << "Token:" << Tok.getName() << " , " << Tok.getRawIdentifier() << "\n";
+			}
+
+			// Temporarily change the diagnostics object so that we ignore any generated
+			// diagnostics from this pass.
+			DiagnosticsEngine TmpDiags(_PP.getDiagnostics().getDiagnosticIDs(),
+										&_PP.getDiagnostics().getDiagnosticOptions(),
+										new IgnoringDiagConsumer);
+
+			// FIXME: This is a huge hack; we reuse the input preprocessor because we want
+			// its state, but we aren't actually changing it (we hope). This should really
+			// construct a copy of the preprocessor.
+			Preprocessor &TmpPP = const_cast<Preprocessor&>(_PP);
+			DiagnosticsEngine *OldDiags = &TmpPP.getDiagnostics();
+			TmpPP.setDiagnostics(TmpDiags);
+
+			// Inform the preprocessor that we don't want comments.
+			TmpPP.SetCommentRetentionState(false, false);
+
+			// We don't want pragmas either. Although we filtered out #pragma, removing
+			// _Pragma and __pragma is much harder.
+			bool PragmasPreviouslyEnabled = TmpPP.getPragmasEnabled();
+			TmpPP.setPragmasEnabled(false);
+
+			// Enter the tokens we just lexed.  This will cause them to be macro expanded
+			// but won't enter sub-files (because we removed #'s).
+			TmpPP.EnterTokenStream(&TokenStream[0], TokenStream.size(), false, false);
+
+			TokenConcatenation ConcatInfo(TmpPP);
+
+			// Lex all the tokens.
+			Token Tok;
+			TmpPP.Lex(Tok);
+			while (Tok.isNot(tok::eof)) {
+				
+				// Ignore non-macro tokens.
+				if (!Tok.getLocation().isMacroID()) {
+					TmpPP.Lex(Tok);
+					//prevIsDefineMACRO = false;
+					continue;
+				}
+
+				/* Only update source code that we previously recorded in MI:
+				   This aims at not updating the MACRO definition itself
+				*/
+				SourceLocation SrcLoc = Tok.getLocation().getLocWithOffset(0);
+				MyMacroInfo MI = Utils::getMacroInfo(SM, SrcLoc);
+				if (!_MAP.count(MI)) {
+					TmpPP.Lex(Tok);
+					continue;
+				}
+
+				// errs() << "src:";
+				// SrcLoc.dump(SM); errs() << "\n";
+				// Okay, we have the first token of a macro expansion: highlight the
+				// expansion by inserting a start tag before the macro expansion and
+				// end tag after it.
+				std::pair<SourceLocation, SourceLocation> LLoc = SM.getExpansionRange(Tok.getLocation());
+
+				// Ignore tokens whose instantiation location was not the main file.
+				if (SM.getFileID(LLoc.first) != FID) {
+					TmpPP.Lex(Tok);
+					continue;
+				}
+
+				ASSERT(SM.getFileID(LLoc.second) == FID && "Start and end of expansion must be in the same ultimate file!");
+
+				std::string Expansion = TmpPP.getSpelling(Tok);
+				unsigned LineLen = Expansion.size();
+				//errs() << "TmpPP:" << Expansion << "\n";
+
+				Token PrevPrevTok;
+				Token PrevTok = Tok;
+				// Okay, eat this token, getting the next one.
+				TmpPP.Lex(Tok);
+
+				// Skip all the rest of the tokens that are part of this macro
+				// instantiation.  It would be really nice to pop up a window with all the
+				// spelling of the tokens or something.
+				
+				while (!Tok.is(tok::eof) && SM.getExpansionLoc(Tok.getLocation()) == LLoc.first) {
+					// Insert a newline if the macro expansion is getting large.
+					// if (LineLen > 60) {
+					// 	Expansion += "<br>";
+					// 	LineLen = 0;
+					// }
+
+					LineLen -= Expansion.size();
+
+					// If the tokens were already space separated, or if they must be to avoid
+					// them being implicitly pasted, add a space between them.
+					if (Tok.hasLeadingSpace() ||
+					ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok, Tok)) {
+						Expansion += ' ';
+					}
+
+					// Escape any special characters in the token text.
+					Expansion += TmpPP.getSpelling(Tok);
+					LineLen += Expansion.size();
+
+					//errs() << "Expansion2:" << Expansion << "\n";
+
+					PrevPrevTok = PrevTok;
+					PrevTok = Tok;
+					TmpPP.Lex(Tok);
+				}
+				
+			    std::string originalCode = _MAP[MI];
+
+			    if (Comments) {
+			    	/* Replace comments, as a MACRO may contain comments in its args, and this will
+						create problems. Example:
+							callMacro(a, b /Comment comment1 EndComment/, c)
+							->
+							/Comment /Comment comment1 EndComment/ EndComment/ definedMACRO(a, b, c)
+					*/
+					Utils::replaceAll(originalCode, "/*", "/Comment:");
+					Utils::replaceAll(originalCode, "*/", "EndComment/");
+					Expansion = "/* @normalize: expanded from MACRO '" + originalCode + "' */ " + Expansion;
+				}
+				
+				/* ugly hack 
+					#define mymacro(a) mymacro(a, 0)
+					this gives problems... so I skip it
+					Note: may need to handle #undef:TODO
+				*/
+				size_t bracePos = originalCode.find("(");
+				if (bracePos != std::string::npos && 
+					Expansion.substr(0, bracePos+1) == originalCode.substr(0, bracePos+1)) {
+					continue;
+				}
+
+				_RW.ReplaceText(SourceRange(LLoc.first, LLoc.second), Expansion);
+			    
+			}
+
+			// Restore the preprocessor's old state.
+			TmpPP.setDiagnostics(*OldDiags);
+			TmpPP.setPragmasEnabled(PragmasPreviouslyEnabled);
+		}
+
+	private:
+		MacroExpansionMap_t & _MAP;
+		Rewriter & _RW;
+		Preprocessor & _PP;
+  		MyASTVisitor _Visitor;
+};
+
+
+#if 0
+class MyASTConsumer : public ASTConsumer {
+	public:
+		MyASTConsumer(Rewriter & RW, Preprocessor & PP) : _RW(RW), _PP(PP) {}
+
+		// Missing function from SourceManager
+		bool isFromMainFile(SourceLocation Loc) const {
+			return _PP.getSourceManager().getFileID(Loc) == _PP.getSourceManager().getMainFileID();
+		}
+
+		SourceLocation getInstantiationLoc(SourceLocation loc) {
+  			return loc.isValid() ? _PP.getSourceManager().getExpansionLoc(loc) : loc;
+		}
+
+		// The code to expand MACROs is available as part of Clang -- see https://clang.llvm.org/doxygen/RewriteMacros_8cpp_source.html
+		// so let's not re-invent the wheel and re-use it instead
+		// Note: an alternative to this code would be to use clang -E to invoke the preprocessor. But I could not
+		// find a way to keep #include unchanged ... everything gets replaced
+		void HandleTranslationUnit(ASTContext &Ctx) override {
+			SourceManager &SM = _PP.getSourceManager();
+			RewriteBuffer &RB = _RW.getEditBuffer(SM.getMainFileID());
+
+			std::vector<Token> RawTokens;
+			LexRawTokensFromMainFile(_PP, RawTokens);
+			unsigned CurRawTok = 0;
+			Token RawTok = GetNextRawTok(RawTokens, CurRawTok, false);
+
+			// Get the first preprocessing token.
+			_PP.EnterMainSourceFile();
+			Token PPTok;
+			_PP.Lex(PPTok);
+
+			// Preprocess the input file in parallel with raw lexing the main file. Ignore
+			// all tokens that are preprocessed from a file other than the main file (e.g.
+			// a header).  If we see tokens that are in the preprocessed file but not the
+			// lexed file, we have a macro expansion.  If we see tokens in the lexed file
+			// that aren't in the preprocessed view, we have macros that expand to no
+			// tokens, or macro arguments etc.
+			while (RawTok.isNot(tok::eof) || PPTok.isNot(tok::eof)) {
+				
+				SourceLocation PPLoc = getInstantiationLoc(PPTok.getLocation());
+
+				// If PPTok is from a different source file, ignore it.
+				if (!isFromMainFile(PPLoc)) {
+					_PP.Lex(PPTok);
+					continue;
+				}
+
+				// If the raw file hits a preprocessor directive, they will be extra tokens
+				// in the raw file that don't exist in the preprocsesed file.  However, we
+				// choose to preserve them in the output file and otherwise handle them
+				// specially.
+				if (RawTok.is(tok::hash) && RawTok.isAtStartOfLine()) {
+					// If this is a #warning directive or #pragma mark (GNU extensions),
+					// comment the line out.
+					if (RawTokens[CurRawTok].is(tok::identifier)) {
+						const IdentifierInfo *II = RawTokens[CurRawTok].getIdentifierInfo();
+						if (II->getName() == "warning") {
+							// Comment out #warning.
+							RB.InsertTextAfter(SM.getFileOffset(RawTok.getLocation()), "//");
+						} else if (II->getName() == "pragma" &&
+							RawTokens[CurRawTok+1].is(tok::identifier) &&
+							(RawTokens[CurRawTok+1].getIdentifierInfo()->getName() ==
+							"mark")) {
+							// Comment out #pragma mark.
+							RB.InsertTextAfter(SM.getFileOffset(RawTok.getLocation()), "//");
+						}
+					}
+
+					// Otherwise, if this is a #include or some other directive, just leave it
+					// in the file by skipping over the line.
+					RawTok = GetNextRawTok(RawTokens, CurRawTok, false);
+					while (!RawTok.isAtStartOfLine() && RawTok.isNot(tok::eof))
+						RawTok = GetNextRawTok(RawTokens, CurRawTok, false);
+					continue;
+				}
+
+				// Okay, both tokens are from the same file.  Get their offsets from the
+				// start of the file.
+				unsigned PPOffs = SM.getFileOffset(PPLoc);
+				unsigned RawOffs = SM.getFileOffset(RawTok.getLocation());
+
+				// If the offsets are the same and the token kind is the same, ignore them.
+				if (PPOffs == RawOffs && isSameToken(RawTok, PPTok)) {
+					RawTok = GetNextRawTok(RawTokens, CurRawTok, false);
+					_PP.Lex(PPTok);
+					continue;
+				}
+
+				// If the PP token is farther along than the raw token, something was
+				// deleted.  Comment out the raw token.
+				if (RawOffs <= PPOffs) {
+					// Comment out a whole run of tokens instead of bracketing each one with
+					// comments.  Add a leading space if RawTok didn't have one.
+					// bool HasSpace = RawTok.hasLeadingSpace();
+					// RB.InsertTextAfter(RawOffs, &" /*"[HasSpace]);
+					// unsigned EndPos;
+
+					do {
+						//EndPos = RawOffs+RawTok.getLength();
+
+						RawTok = GetNextRawTok(RawTokens, CurRawTok, true);
+						RawOffs = SM.getFileOffset(RawTok.getLocation());
+
+						if (RawTok.is(tok::comment)) {
+							// Skip past the comment.
+							RawTok = GetNextRawTok(RawTokens, CurRawTok, true);
+							break;
+						}
+
+					} while (RawOffs <= PPOffs && !RawTok.isAtStartOfLine() &&
+							(PPOffs != RawOffs || !isSameToken(RawTok, PPTok)));
+
+					//RB.InsertTextBefore(EndPos, "*/");
+					continue;
+				}
+
+				// Otherwise, there was a replacement an expansion.  Insert the new token
+				// in the output buffer.  Insert the whole run of new tokens at once to get
+				// them in the right order.
+				unsigned InsertPos = PPOffs;
+				std::string Expansion;
+				while (PPOffs < RawOffs) {
+					Expansion += ' ' + _PP.getSpelling(PPTok);
+					_PP.Lex(PPTok);
+					PPLoc = getInstantiationLoc(PPTok.getLocation());
+					PPOffs = SM.getFileOffset(PPLoc);
+				}
+				
+				Expansion += ' ';
+				errs() << "inserting:" << InsertPos << ":'" << Expansion << "'\n";
+				//static int a = 1;
+				//RB.ReplaceText();
+				// if (a++ % 2)
+				Expansion = "S"+Expansion+"E";
+				_RW.ReplaceText(PPLoc, "");
+
+				/* We want only the MACRO expansions */
+				// if (Lexer::isAtStartOfMacroExpansion(PPLoc, SM, _RW.getLangOpts())) {
+				// 	errs() << "macro!\n";
+				// }
+
+		 	// 	CharSourceRange CSR = CharSourceRange::getTokenRange(s->getLocStart(),s->getLocEnd());
+		  // 		std::string SrcText = Lexer::getSourceText(CSR, SM, _RW.getLangOpts());
+				//RB.InsertTextBefore(InsertPos, "S"+Expansion+"E");
+			}
+
+			// Get the buffer corresponding to MainFileID.  If we haven't changed it, then
+			// we are done.
+			//if (const RewriteBuffer *RewriteBuf = _RW.getRewriteBufferFor(SM.getMainFileID())) {
+			//printf("Changed:\n");
+				//*OS << std::string(RewriteBuf->begin(), RewriteBuf->end());
+
+			// } else {
+			// 	fprintf(stderr, "No changes\n");
+			//}
+			ASSERT( _RW.overwriteChangedFiles() == false /* I know, pretty counter intuitive */ );
+			//OS->flush();
+		}
+
+	private:
+		/// isSameToken - Return true if the two specified tokens start have the same
+		/// content.
+		bool isSameToken(Token &RawTok, Token &PPTok) {
+			// If two tokens have the same kind and the same identifier info, they are
+			// obviously the same.
+			if (PPTok.getKind() == RawTok.getKind() && PPTok.getIdentifierInfo() == RawTok.getIdentifierInfo())
+				return true;
+
+			// Otherwise, if they are different but have the same identifier info, they
+			// are also considered to be the same.  This allows keywords and raw lexed
+			// identifiers with the same name to be treated the same.
+			if (PPTok.getIdentifierInfo() && PPTok.getIdentifierInfo() == RawTok.getIdentifierInfo())
+				return true;
+
+			return false;
+		}
+
+
+		/// GetNextRawTok - Return the next raw token in the stream, skipping over
+		/// comments if ReturnComment is false.
+		const Token &GetNextRawTok(const std::vector<Token> &RawTokens, unsigned &CurTok, bool ReturnComment) {
+			ASSERT(CurTok < RawTokens.size() && "Overran eof!");
+
+			// If the client doesn't want comments and we have one, skip it.
+			if (!ReturnComment && RawTokens[CurTok].is(tok::comment))
+				++CurTok;
+
+			return RawTokens[CurTok++];
+		}
+
+		/// LexRawTokensFromMainFile - Lets all the raw tokens from the main file into
+		/// the specified vector.
+		void LexRawTokensFromMainFile(Preprocessor &PP, std::vector<Token> &RawTokens) {
+			SourceManager &SM = _PP.getSourceManager();
+
+			// Create a lexer to lex all the tokens of the main file in raw mode.  Even
+			// though it is in raw mode, it will not return comments.
+			const llvm::MemoryBuffer *FromFile = SM.getBuffer(SM.getMainFileID());
+			Lexer RawLex(SM.getMainFileID(), FromFile, SM, _PP.getLangOpts());
+
+			// Switch on comment lexing because we really do want them.
+			RawLex.SetCommentRetentionState(true);
+
+			Token RawTok;
+			do {
+				RawLex.LexFromRawLexer(RawTok);
+
+				// If we have an identifier with no identifier info for our raw token, look
+				// up the indentifier info.  This is important for equality comparison of
+				// identifier tokens.
+				if (RawTok.is(tok::identifier) && !RawTok.getIdentifierInfo())
+					_PP.LookUpIdentifierInfo(RawTok);
+
+				RawTokens.push_back(RawTok);
+			} while (RawTok.isNot(tok::eof));
+		}
+
+		Rewriter & _RW;
+		Preprocessor & _PP;
+};
+#endif
+
+// For each source file provided to the tool, a new FrontendAction is created.
+class MyFrontendAction : public ASTFrontendAction {
+	public:
+		MyFrontendAction() {}
+
+		void EndSourceFileAction() override {
+			//SourceManager &SM = _rewriter.getSourceMgr();
+			//llvm::errs() << "** EndSourceFileAction for: " << SM.getFileEntryForID(SM.getMainFileID())->getName() << "\n";
+
+			// Now emit the rewritten buffer.
+			//_rewriter.getEditBuffer(SM.getMainFileID()).write(llvm::outs());
+
+			/* flush changes to files */
+			ASSERT( _rewriter.overwriteChangedFiles() == false /* I know, pretty counter intuitive */ );
+		}
+
+		/* Not necessary for us */
+		bool BeginInvocation (CompilerInstance &CI) override {
+			return true;
+		}		
+
+		std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef file) override {
+			//llvm::errs() << "** Creating AST consumer for: " << file << "\n";
+	    	_rewriter.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+	    	return llvm::make_unique<MyASTConsumer>(MacroExpansionMap, _rewriter, CI.getPreprocessor());
+	  	}
+
+	private:
+		MacroExpansionMap_t MacroExpansionMap;
+		Rewriter _rewriter;
+};
+
+
+int main(int argc, const char *argv[]) {
+
+	CommonOptionsParser op(argc, argv, MyToolCategory);
+	ClangTool Tool (op.getCompilations(), op.getSourcePathList());
+	// ClangTool::run accepts a FrontendActionFactory, which is then used to
+	// create new objects implementing the FrontendAction interface. Here we use
+	// the helper newFrontendActionFactory to create a default factory that will
+	// return a new MyFrontendAction object every time.
+	// To further customize this, we could create our own factory class.
+	return Tool.run(newFrontendActionFactory<MyFrontendAction>().get());
+}

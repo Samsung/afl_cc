@@ -1,0 +1,154 @@
+#!/bin/sh
+
+
+# options #
+NORMALIZED_FILE_PREPEND="normalized_"
+BACKUP_FILE_PREPEND="backup_"
+
+LIB_DIR="$( cd "$(dirname "$0")" ; pwd -P )"
+. $LIB_DIR/library.sh
+
+if [ -z "$LLVM_CONFIG" ]; then
+	fatal "LLVM_CONFIG not defined"
+fi
+
+VERSION=$($LLVM_CONFIG --version)
+VERSION_38=$(echo $VERSION | grep '3\.8')
+if [ -z "$VERSION_38" ]; then
+	fatal "LLVM_VERSION points to wrong version:\n${VERSION}\n\nWe need version 3.8"
+fi
+
+err_exit()
+{
+	err "$@"
+	exit 1
+}
+
+CC=`basename $0`
+
+export LLVM_COMPILER_PATH=`$LLVM_CONFIG --bindir`
+#export LLVM_CC_NAME=clang # not needed
+
+# remove all -OX from the options
+ARGS=$@
+ARGS=$(echo $ARGS | sed -e 's/-O[^ ]*/-O0/g')
+ERR_MV=""
+optE=$(echo $ARGS | grep -q '\-E')
+
+is_cmake=$(echo $ARGS | grep -E 'cmake.*/Modules')
+is_autoconf=$(echo $ARGS | grep 'conftest\.c')
+
+
+# set gclang compiler
+if [ $CC = "aflc-gclang" ]; then
+	GCLANG=$LIB_DIR/gclang
+
+elif [ $CC = "aflc-gclang-cov" ]; then
+	GCLANG=$LIB_DIR/gclang
+	if [ -z "$is_cmake" ] && [ -z "$is_autoconf" ]; then
+		CLANG_REWRITERS=$LIB_DIR/run_rewriters
+	fi
+	
+elif [ $CC = "aflc-gclang++" ]; then
+	GCLANG=$LIB_DIR/gclang++
+
+elif [ $CC = "aflc-gclang-cov++" ]; then
+	GCLANG=$LIB_DIR/gclang++
+	if [ -z "$is_cmake" ] && [ -z "$is_autoconf" ]; then
+		CLANG_REWRITERS=$LIB_DIR/run_rewriters++
+	fi
+else
+	fatal "Invalid filename '$CC'"
+fi
+
+# call the gclang:TODO sclang++
+# and let it do its magic
+
+# add the -funroll-loops like AFL does
+# add -g do have access to debug info in the LLVM pass
+# we remove them from final executable in aflc-gclang-fast
+
+# run the clang passes for normalization
+# 1>/dev/null 2>&1
+
+
+if [ ! -z $CLANG_REWRITERS ] && [ -z $optE ]; then
+	# first, backup each file
+	prev_is_o=0
+	for arg in $ARGS; do
+		
+		echo $arg | tr '[:upper:]' '[:lower:]' | grep -qE "([.]c|[.]cc|[.]cxx|[.]cpp|[.]c[+]{2})$"
+		ret=$?
+		if [ $ret -eq 0 ]; then
+			fn=`get_fn_from_file $arg`
+			bk_fn=`get_dir_of_file $arg`/$BACKUP_FILE_PREPEND$fn
+			# make sure we don't ovrwrite user's files
+			# the file should be either 
+			# 1. the same, or 
+			# 2. a coverage file
+
+			if file_exists $bk_fn; then
+				cmp --silent $arg $bk_fn
+				ret=$?				
+				if [ $ret -ne 0 ]; then
+					# files are different
+					err_exit "File $bk_fn already exists. If you want to continue, delete it first. 
+					The compilation script uses it to store to backup the original file. If you need to keep this file, edit
+					BACKUP_FILE_PREPEND in $LIB_DIR/$CC"
+				fi
+			fi
+
+			# replace the old file with the new one, if we're not using cmake
+			cp $arg $bk_fn || { $ERR_MV; err_exit "cp $arg $bk_fn"; }
+			ERR_MV="$ERR_MV mv $bk_fn $arg"
+			
+		fi
+	done
+
+	# apply the source code transformations
+	$CLANG_REWRITERS -Wall -Wextra -pedantic -funroll-loops $ARGS || { $ERR_MV; err_exit "run_rewriters"; }
+	
+fi
+
+# run the actual compilation
+# Note: I want to use -fdiagnostics-absolute-paths, but not supported until 4.0, I believe
+# so instead I loop over input file and replace them with fullpath names
+FULL_ARGS=""
+for arg in $ARGS; do
+	if file_exists $arg; then
+		fp=`get_full_path_of_file $arg`
+		FULL_ARGS="$FULL_ARGS $fp"
+	else
+		FULL_ARGS="$FULL_ARGS $arg"
+	fi
+done
+
+
+$GCLANG -g -Wall -Wextra -pedantic -funroll-loops $FULL_ARGS || { $ERR_MV >/dev/null 2>&1; err_exit "clang"; }
+
+# copy back the original file, and rename the normalized file
+if [ ! -z $CLANG_REWRITERS ] && [ -z $optE ]; then
+	for arg in $ARGS; do
+		echo $arg | tr '[:upper:]' '[:lower:]' | grep -qE "([.]c|[.]cc|[.]cxx|[.]cpp|[.]c[+]{2})$"
+		ret=$?
+
+		if [ $ret -eq 0 ]; then
+			fn=`get_fn_from_file $arg`
+			bk_fn=`get_dir_of_file $arg`/$BACKUP_FILE_PREPEND$fn
+			cov_fn=`get_dir_of_file $arg`/$NORMALIZED_FILE_PREPEND$fn
+			# make sure if we are overwriting a file, this file is ours
+			if file_exists $cov_fn; then
+				line=$(head -n 1 $cov_fn)
+				if test "$line" != "// @NORMALIZE: DONE" ; then
+					$ERR_MV >/dev/null 2>&1
+					err_exit "File $cov_fn already exists. If you want to continue, delete it first. 
+					The compilation script uses it to store the normalized file. If you need to keep this file, edit
+					NORMALIZED_FILE_PREPEND in $LIB_DIR/$CC"
+				fi
+			fi
+			
+			mv $arg $cov_fn || { $ERR_MV >/dev/null 2>&1; err_exit "mv $arg $cov_fn"; }
+			mv $bk_fn $arg || { $ERR_MV >/dev/null 2>&1; err_exit "mv $bk_fn $arg"; }
+		fi
+	done
+fi

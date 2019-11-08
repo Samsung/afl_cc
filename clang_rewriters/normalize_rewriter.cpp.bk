@@ -1,0 +1,348 @@
+#include "clang/AST/AST.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/ASTConsumers.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendActions.h"
+#include "clang/Rewrite/Core/Rewriter.h"
+#include "clang/Tooling/CommonOptionsParser.h"
+#include "clang/Tooling/Tooling.h"
+#include "clang/Lex/HeaderSearchOptions.h"
+#include "clang/Lex/Lexer.h"
+#include "clang/Lex/Preprocessor.h"
+#include "clang/Lex/TokenConcatenation.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/LineIterator.h"
+
+#include <sstream>
+#include <string>
+
+#include "common.h"
+
+#define TOOL_NAME "Normalize"
+
+using namespace clang;
+using namespace clang::driver;
+using namespace clang::tooling;
+using namespace llvm;
+
+/*
+	Inspired by https://github.com/loarabia/Clang-tutorial/blob/master/CIrewriter.cpp
+
+*/
+
+
+// https://clang.llvm.org/doxygen/classclang_1_1tooling_1_1CommonOptionsParser.html
+static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
+cl::OptionCategory MyToolCategory(TOOL_NAME " rewriter options");
+static cl::opt<bool> Comments("comments", 
+								cl::desc("Add comments to normalised code"), 
+								cl::Required,
+								cl::cat(MyToolCategory));
+// custom option
+cl::opt<bool> ForceBrackets("braces", 
+							cl::desc("Add surrounding braces to all If/For/While statements"),
+							cl::init(false),
+							cl::Required,
+							cl::cat(MyToolCategory));
+
+class Utils {
+	public:
+		
+		static unsigned get_line(const SourceManager & SM, SourceLocation SL) {
+			ASSERT (SL.isValid());
+			if(!SL.isFileID()) {
+				SL = SM.getExpansionLoc(SL); ASSERT (SL.isValid());
+				ASSERT(SL.isFileID());
+			}
+
+			PresumedLoc PLoc = SM.getPresumedLoc(SL); ASSERT(PLoc.isValid());
+			//std::string filename = PLoc.getFilename();
+			unsigned lineNo = PLoc.getLine();
+			//unsigned colNo = PLoc.getColumn();
+			return lineNo;
+		}
+};
+
+/* By implementing RecursiveASTVisitor, we can specify which AST nodes
+   we're interested in by overriding relevant methods.
+*/
+class MyASTVisitor : public RecursiveASTVisitor<MyASTVisitor> {
+	public:
+		MyASTVisitor(Rewriter &RW) : _RW(RW) {}
+
+	/*	a ? b : c 
+			=>
+		a ?
+		b :
+		c
+	*/
+	void InstrumentSelect(ConditionalOperator * co) {
+		ASSERT (!isa<CompoundStmt>(co));
+		
+		SourceManager & SM = _RW.getSourceMgr();
+
+		Expr * Cond = co->getCond(); ASSERT (Cond);
+		Expr * True = co->getTrueExpr(); ASSERT (True);
+		Expr * False = co->getFalseExpr(); ASSERT (False);
+
+		unsigned CondLine = Utils::get_line(SM, Cond->getLocStart());
+		unsigned TrueLine = Utils::get_line(SM, True->getLocStart());
+		unsigned FalseLine = Utils::get_line(SM, False->getLocStart());
+
+		if ( CondLine == TrueLine ) {
+			_RW.InsertText(True->getLocStart(), Comments ? " /* @normalize: Select-Cond */\n" : "\n" , true, true);
+		}
+
+		if ( TrueLine == FalseLine ) {
+			_RW.InsertText(False->getLocStart(), Comments ? " /* @normalize: Select-True */\n" : "\n", true, true);
+		}
+	}
+
+	/*	a BinOp b
+			=>
+		a BinOp
+		b
+
+		where BinOp is || or &&
+
+		Note: clang-format has an option BreakBeforeBinaryOperators, but this will add
+		a line for all binary operators. We only want && and ||
+	 */
+	void InstrumentBinaryOperator(BinaryOperator * bo) {
+		ASSERT (!isa<CompoundStmt>(bo));
+		BinaryOperatorKind code = bo->getOpcode();
+		
+		if ( code == BinaryOperatorKind::BO_LAnd || code == BinaryOperatorKind::BO_LOr ) {
+			SourceManager & SM = _RW.getSourceMgr();
+			Expr * Right = bo->getRHS(); ASSERT(Right);
+			Expr * Left = bo->getLHS(); ASSERT(Left);
+			unsigned LeftLine = Utils::get_line(SM, Left->getLocStart());
+			unsigned RightLine = Utils::get_line(SM, Right->getLocStart());
+			if ( LeftLine == RightLine ) {
+				_RW.InsertText(Right->getLocStart(), Comments ? " /* @normalize: BinOp */\n" : "\n", true, true);
+			}			
+		}
+
+	}
+
+	/*	while() ... 
+			=>
+	   	while() {
+			...
+	   	}
+	*/
+	void InstrumentWhileStmt(WhileStmt * While) {
+		Stmt * Body = While->getBody(); ASSERT(Body);
+		InstrumentStmt(Body);
+	}
+
+	/*	for(Init; Cond; Inc) ... 
+			=>
+		for(Init;
+			Cond;
+			Inc) {
+			...
+		}
+	*/
+	void InstrumentForStmt(ForStmt * For) {
+		SourceManager & SM = _RW.getSourceMgr();
+
+		Stmt * Init = For->getInit(); 
+		Expr * Cond = For->getCond(); 
+		Expr * Inc = For->getInc(); 
+
+		#if 0 /* If Init is hit, then Cond is too: so do not put them on different lines */
+		if (Init && Cond) {
+			unsigned InitLine = Utils::get_line(SM, Init->getLocStart());
+			unsigned CondLine = Utils::get_line(SM, Cond->getLocStart());
+			if ( CondLine == InitLine) {
+				_RW.InsertText(Cond->getLocStart(), " /* @normalize: For-Init */\n", true, true);
+			}
+		}
+		#endif
+
+		if (Inc) {
+			bool addLine = false;
+			unsigned IncLine = Utils::get_line(SM, Inc->getLocStart());
+			if (Cond) {
+				unsigned CondLine = Utils::get_line(SM, Cond->getLocStart());
+				addLine = (IncLine == CondLine);
+			} else if (Init) {
+				unsigned InitLine = Utils::get_line(SM, Init->getLocStart());
+				addLine = (IncLine == InitLine);
+			}
+
+			if (addLine) {
+				_RW.InsertText(Inc->getLocStart(), Comments ? " /* @normalize: For-Cond */\n" : "\n", true, true);
+			}
+		}
+
+		// TODO: for loop statement ++i must be visited
+		Stmt * Body = For->getBody(); ASSERT(Body);
+		InstrumentStmt(Body);
+	}
+
+	/*	if() ... else ... 
+			=>
+		if() {
+			...
+		} else {
+			...
+		}
+	*/
+	void InstrumentIfStmt(IfStmt * If) {
+
+		Stmt * Then = If->getThen(); ASSERT(Then);
+		Stmt * Else = If->getElse();
+
+		// Add braces if needed to then clause
+		InstrumentStmt(Then);
+
+		/* instrument the Else only if it's not an 'else if',
+		in which case it wil be visited later and be instrumented in InstrumentIfStmt() */
+		if (Else && !isa<IfStmt>(Else)) {
+			InstrumentStmt(Else);
+		}
+	}
+
+	/* Add opening/closing brackets */
+	void InstrumentStmt(Stmt *s) {
+
+		// Only perform if statement is not compound
+		if (!isa<CompoundStmt>(s) && ForceBrackets) {
+
+
+			/* Closing brace */
+			// Note Stmt::getLocEnd() returns the source location prior to the
+			// token at the end of the line.  For instance, for:
+			// var = 123;
+			//      ^---- getLocEnd() points here.
+
+			SourceLocation END = s->getLocEnd();
+			
+			// MeasureTokenLength gets us past the last token, and adding 1 gets
+			// us past the ';'.
+			// WARNING: this assumes the ; is right after END
+			unsigned offset = Lexer::MeasureTokenLength(END,
+			                                       _RW.getSourceMgr(),
+			                                       _RW.getLangOpts()) + 1;
+
+			SourceLocation END1 = END.getLocWithOffset(offset);
+			
+			/* this silly code here is because of a weird bug I did not manage to fix:
+				
+				if (a)
+					anyVariable = NULL;
+
+				This leads to a problem where END1 is not valid so the closing brace is not inserted,
+				hence corrupting the source code file... :(
+			 */
+			bool Error = _RW.InsertText(END1, Comments ? "\n} /* @normalize: Stmt-Closing-Braces */\n" : "\n}\n", true, true);
+			if (!Error) {
+				/* Opening brace */
+				_RW.InsertText(s->getLocStart(), Comments ? "{ /* @normalize: Stmt-Opening-Braces */\n" : "{\n", true, true);
+			} //else {
+			//	_RW.InsertText(s->getLocStart(), " /* @normalize: No brace added (Invalid location) */ ", false, true);
+			//}
+			
+		}
+
+		// Also note getLocEnd() on a CompoundStmt points ahead of the '}'.
+  		// Use getLocEnd().getLocWithOffset(1) to point past it.
+	}
+
+	// Override Statements which includes expressions and more
+	// TODO: put in different function, eg VisitBinaryOperator, etc
+	bool VisitStmt(Stmt *s) {
+
+		SourceManager & SM = _RW.getSourceMgr();
+		if (SM.isInSystemHeader(s->getLocStart())) {
+			return true;
+		}
+
+		if (isa<IfStmt>(s)) {
+			InstrumentIfStmt(cast<IfStmt>(s));
+		} else if (isa<WhileStmt>(s)) {
+			InstrumentWhileStmt(cast<WhileStmt>(s));
+		} else if (isa<ForStmt>(s)) {
+			InstrumentForStmt(cast<ForStmt>(s));
+		} else if (isa<ConditionalOperator>(s)) {
+			InstrumentSelect(cast<ConditionalOperator>(s));
+		} else if (isa<BinaryOperator>(s)) {
+			InstrumentBinaryOperator(cast<BinaryOperator>(s));
+		} else {
+		//	s->dump();
+		}
+
+		return true; // returning false aborts the traversal
+	}
+
+	private:
+		Rewriter & _RW;
+};
+
+
+/* Implementation of the ASTConsumer interface for reading an AST produced
+   by the Clang parser.
+*/
+class MyASTConsumer : public ASTConsumer {
+	public:
+		MyASTConsumer(Rewriter & RW) : _Visitor(RW) {}
+
+		/* Override the method that gets called for each parsed top-level declaration */
+		bool HandleTopLevelDecl(DeclGroupRef DR) override {
+			for (DeclGroupRef::iterator b = DR.begin(), e = DR.end(); b != e; ++b) {
+				/* Traverse the declaration using our AST visitor */
+				_Visitor.TraverseDecl(*b);
+				//(*b)->dump();
+			}
+			return true;
+		}
+
+	private:
+		MyASTVisitor _Visitor;
+};
+
+// For each source file provided to the tool, a new FrontendAction is created.
+class MyFrontendAction : public ASTFrontendAction {
+	public:
+		MyFrontendAction() {}
+
+		void EndSourceFileAction() override {
+			//SourceManager &SM = _rewriter.getSourceMgr();
+			//llvm::errs() << "** EndSourceFileAction for: " << SM.getFileEntryForID(SM.getMainFileID())->getName() << "\n";
+
+			// Now emit the rewritten buffer.
+			//_rewriter.getEditBuffer(SM.getMainFileID()).write(llvm::outs());
+			ASSERT( _rewriter.overwriteChangedFiles() == false /* I know, pretty counter intuitive */ );
+		}
+
+		/* Not necessary for us */
+		bool BeginInvocation (CompilerInstance &CI) override {
+			return true;
+		}		
+
+		std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef file) override {
+			//llvm::errs() << "** Creating AST consumer for: " << file << "\n";
+			_rewriter.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
+			return llvm::make_unique<MyASTConsumer>(_rewriter);
+	  	}
+
+	private:
+		Rewriter _rewriter;
+};
+
+
+int main(int argc, const char *argv[]) {
+
+	CommonOptionsParser op(argc, argv, MyToolCategory);
+	ClangTool Tool (op.getCompilations(), op.getSourcePathList());
+	// ClangTool::run accepts a FrontendActionFactory, which is then used to
+	// create new objects implementing the FrontendAction interface. Here we use
+	// the helper newFrontendActionFactory to create a default factory that will
+	// return a new MyFrontendAction object every time.
+	// To further customize this, we could create our own factory class.
+	return Tool.run(newFrontendActionFactory<MyFrontendAction>().get());
+}

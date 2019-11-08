@@ -1,0 +1,160 @@
+#!/bin/sh
+
+LIB_DIR="$( cd "$(dirname "$0")" ; pwd -P )"
+. $LIB_DIR/library.sh
+
+PID=`get_pid`
+
+export AFL_BCCLANG_MAP_FILE=/tmp/afl-pass-edge.$PID
+export AFL_BCCLANG_BBMAP_FILE=/tmp/afl-pass-bb.$PID
+export AFL_BCCLANG_DICT_FILE=/tmp/dict.$PID
+export AFL_BCCLANG_COVERAGE_TO_SRC_FILE=/tmp/cov2src.$PID
+export AFL_BCCLANG_BUILD_ID=/tmp/buildID.$PID
+
+rm $AFL_BCCLANG_MAP_FILE 2>/dev/null
+rm $AFL_BCCLANG_BBMAP_FILE 2>/dev/null
+rm $AFL_BCCLANG_DICT_FILE 2>/dev/null
+rm $AFL_BCCLANG_COVERAGE_TO_SRC_FILE 2>/dev/null
+rm $AFL_BCCLANG_BUILD_ID 2>/dev/null
+
+
+if [ -z "$LLVM_CONFIG" ]; then
+	fatal "LLVM_CONFIG not defined"
+fi
+
+VERSION=$($LLVM_CONFIG --version)
+VERSION_38=$(echo $VERSION | grep '3\.8')
+if [ -z "$VERSION_38" ]; then
+	fatal "LLVM_VERSION points to wrong version:\n${VERSION}\n\nWe need version 3.8"
+fi
+
+CC=`basename $0`
+if [ $CC = "aflc-clang-fast" ]; then
+	CLANG_FAST=$LIB_DIR/afl-clang-fast
+elif [ $CC = "aflc-clang-fast++" ]; then
+	CLANG_FAST=$LIB_DIR/afl-clang-fast++
+else
+	fatal "Invalid filename '$CC'"
+fi
+
+# get the output filename
+output_file=$(echo $@ | awk 'BEGIN {FS="-o ";}{print $2}' | awk '{print $1}')
+#bc_file=$(echo $@ | grep -oP '\S*\.bc(?=\s|$)')
+#echo $output_file
+#echo $bc_file
+
+# if [ -z $bc_file ]; then
+# 	fatal "Could not get .bc file name"
+# fi
+
+if [ -z $output_file ]; then
+	fatal "Could not get the output filename"
+fi
+
+$CLANG_FAST ${@} || exit
+
+# write the build id into afl section
+if [ ! -f $AFL_BCCLANG_BUILD_ID ]; then
+	fatal "Cannot find edge file $AFL_BCCLANG_BUILD_ID"
+fi
+
+# start with the build id file
+mv $AFL_BCCLANG_BUILD_ID afl_section
+
+# write the number of edges into the afl section
+if [ ! -f $AFL_BCCLANG_MAP_FILE ]; then
+	fatal "Cannot find edge file $AFL_BCCLANG_OUT_FILE"
+fi
+
+cat $AFL_BCCLANG_MAP_FILE >> afl_section
+rm $AFL_BCCLANG_MAP_FILE
+
+# write the number of bbs into the afl section
+if [ ! -f $AFL_BCCLANG_BBMAP_FILE ]; then
+	fatal "Cannot find edge file $AFL_BCCLANG_BBMAP_FILE"
+fi
+
+cat $AFL_BCCLANG_BBMAP_FILE >> afl_section
+rm $AFL_BCCLANG_BBMAP_FILE
+
+# write the build type into the afl section
+if [ -z "$AFL_BUILD_TYPE" ]; then
+	fatal "Variable AFL_BUILD_TYPE not set"
+fi
+
+if [ $AFL_BUILD_TYPE = "COVERAGE" ] || [ $AFL_BUILD_TYPE = "FUZZING" ]; then
+	echo -n $AFL_BUILD_TYPE >> afl_section
+else
+	fatal "Invalid AFL_BUILD_TYPE. Allowed: {COVERAGE,FUZZING}"
+fi
+
+# separater
+echo -n "," >> afl_section
+
+# write the coverage type into afl section
+if [ -z "$AFL_COVERAGE_TYPE" ]; then
+	fatal "Variable AFL_COVERAGE_TYPE not set"
+fi
+
+if [ $AFL_COVERAGE_TYPE = "ORIGINAL" ] || [ $AFL_COVERAGE_TYPE = "NO_COLLISION" ]; then
+	echo -n $AFL_COVERAGE_TYPE >> afl_section
+else
+	fatal "Invalid AFL_COVERAGE_TYPE. Allowed: {ORIGINAL,NO_COLLISION}"
+fi
+
+# if the build is coverage, then the there should be no conditional instrumentation
+if [ -z "$AFL_CONVERT_COMPARISON_TYPE" ]; then
+	fatal "Variable AFL_CONVERT_COMPARISON_TYPE not set"
+fi
+
+if [ $AFL_BUILD_TYPE = "COVERAGE" ] && [ $AFL_CONVERT_COMPARISON_TYPE != "NONE" ]; then
+	fatal "Invalid AFL_BUILD_TYPE=COVERAGE must be with AFL_CONVERT_COMPARISON_TYPE=NONE"
+fi
+
+OBJCOPY=`which objcopy`
+if [ -z $OBJCOPY ]; then
+	fatal "Cannot find objcopy"
+fi
+
+STRIP=`which strip`
+if [ -z $STRIP ]; then
+	fatal "Cannot find strip"
+fi
+
+
+# if [ ! -f $bc_file ]; then
+# 	fatal "Cannot find input file $bc_file"
+# fi
+
+run_command "Adding edge metadata" $OBJCOPY --add-section .afl=afl_section --set-section-flags .afl=noload,readonly $output_file $output_file
+rm -f afl_section
+# Note: objdump -s -j .afl $output_file
+
+run_command "Stripping binary" $STRIP --strip-all -o $output_file $output_file 
+
+safe_pwd=$(printf '%s\n' "$PWD/" | sed 's/[\&/]/\\&/g')
+
+COV2SRC_FILE=$(echo $(get_full_path_of_file $output_file.c2s) | sed "s/$safe_pwd//g")
+if [ ! -f $AFL_BCCLANG_COVERAGE_TO_SRC_FILE ]; then
+	if [ "$AFL_BUILD_TYPE" = "COVERAGE" ]; then
+		fatal "Cannot find c2s file $AFL_BCCLANG_COVERAGE_TO_SRC_FILE"
+	else
+		warn "No coverage file generated"
+		rm $COV2SRC_FILE 2>/dev/null
+	fi
+else
+	if [ "$AFL_BUILD_TYPE" = "FUZZING" ]; then
+		fatal "Found c2s file $AFL_BCCLANG_COVERAGE_TO_SRC_FILE. Should not be created!"
+	fi
+	mv $AFL_BCCLANG_COVERAGE_TO_SRC_FILE $COV2SRC_FILE
+	info "Mapping (BB<->SRC) file generated as $COV2SRC_FILE"
+fi
+
+if [ ! -f $AFL_BCCLANG_DICT_FILE ]; then
+	warn "No dictionary was generated"
+else
+	DICT_FILE=$(echo $(get_full_path_of_file $output_file.dict) | sed "s/$safe_pwd//g")
+	mv $AFL_BCCLANG_DICT_FILE $DICT_FILE
+	info "Dictionary file generated as $DICT_FILE"
+fi
+
