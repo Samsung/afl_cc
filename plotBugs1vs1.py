@@ -21,6 +21,7 @@ def readOptions():
 	parser = argparse.ArgumentParser()
 	parser.add_argument('-p', "--project", required=True, help="project folder")
 	parser.add_argument('-f', "--fuzzers", required=True, help="fuzzers to compare", type=str)
+	parser.add_argument('-g', "--legend", required=True, help="names of fuzzers in legend", type=str)
 	parser.add_argument('-n', "--nbugs", required=True, help="number of bugs", type=int)
 	parser.add_argument('-o', "--ofile", required=False, help="Output file")
 	parser.add_argument('-r', "--rotate_names", default="0", required=False, help="Rotate bar names by given value")
@@ -30,6 +31,7 @@ def readOptions():
 	args = parser.parse_args()
 
 	args.fuzzers = [item for item in args.fuzzers.split(',')]
+	args.legend = [item for item in args.legend.split(',')]
 	
 	return args
 
@@ -40,6 +42,7 @@ def main(options):
 	fuzzers = args.fuzzers
 	project_folder = os.path.realpath(os.path.expanduser(args.project))
 	ofile = args.ofile
+	legend = args.legend
 	rotate = args.rotate_names
 	nbugs = args.nbugs
 	yaxis = args.yaxis
@@ -76,8 +79,17 @@ def main(options):
 	plt.xticks(y_ticks, y_labels)
 	#plt.xticks(xrange(len(histo_names)), rotation=rotate)
 
-	bars1 = ax.bar(y_pos1, fuzzer1_bugs, width=0.4, color='#7fc97f', align='center', alpha=0.75, edgecolor = "none", linewidth='0.2', error_kw=dict(lw=0.5, capsize=0.5, capthick=0.5))
-	bars2 = ax.bar(y_pos2, fuzzer2_bugs, width=0.4, color='#beaed4', align='center', alpha=0.75, edgecolor = "none", linewidth='0.2', error_kw=dict(lw=0.5, capsize=0.5, capthick=0.5))
+	# legend
+	fuzzer1_name = legend[0]
+	fuzzer2_name = legend[1]
+	# xx-small x-small small medium large x-large xx-large
+	legend_fsize = 'medium'
+	bars1 = ax.bar(y_pos1, fuzzer1_bugs, width=0.4, hatch='\\', color='#7fc97f', label=fuzzer1_name, align='center', alpha=0.75, edgecolor = "none", linewidth='0.2', error_kw=dict(lw=0.5, capsize=0.5, capthick=0.5))
+	bars2 = ax.bar(y_pos2, fuzzer2_bugs, width=0.4, hatch='/', color='#beaed4', label=fuzzer2_name, align='center', alpha=0.75, edgecolor = "none", linewidth='0.2', error_kw=dict(lw=0.5, capsize=0.5, capthick=0.5))
+
+	plt.legend(loc='upper right', fontsize=legend_fsize)
+	legend = plt.legend()
+	legend.get_frame().set_linewidth(0.0)
 
 	plt.ylabel(yaxis)
 	#plt.title(title)
