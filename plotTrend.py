@@ -63,25 +63,24 @@ def main(options):
 	name_mappings={"qsym": "QSYM", "o-o-o-newdict": "V\\_AD", "o-n-c-all-olddict": "C\\_MD\\_FBSP", "o-o-o-oldict": "V\\_MD", \
 					"o-n-c-all-noopt": "C\\_AD\\_FBSP", "o-n-c-all-opt": "C\\_OD\\_FBSP", "o-n-c-notdict-noopt": "C\\_AD\\_LBSP", \
 					"o-n-c-none-opt": "C\\_OD", "o-n-c-all-none": "C\\_FBSP", "angora": "Angora", "o-n-c-nodict-opt": "C\\_OD\\_LBSP",
-					"o-o-o-none": "V-O3", "o-o-o-none0": "V-O0", "o-o-o-mopt" : "MOpt", "o-o-l": "V\\_LAF-INTEL", "o-o-l-cc": "C\\_LAF-INTEL", \
+					"o-o-o-none": "V\\_O3", "o-o-o-none0": "V\\_O0", "o-o-o-mopt" : "MOpt", "o-o-l": "LAF\\_INTEL", "o-o-l-cc": "C\\_LAF\\_INTEL", \
 						"o-n-c-none-newdict": "C\\_AD"}
 
 
-	subfolders = [fn for fn in os.listdir(project_folder) if storage.isdir(os.path.join(project_folder, fn)) if fn != "in"]
+	subfolders = [fn for fn in os.listdir(project_folder) if storage.isdir(os.path.join(project_folder, fn)) if fn != "in" and not fn.startswith("__results_")]
 	log.info("Found %u projects", len(subfolders))
 
 	# read project and put them in our list
 	projects_data = []
 	themin = sys.maxint
 	for fn in subfolders:
+	
 		if (fn in ignore_list) or (only_list and fn not in only_list):
 			log.info("Ignoring project %s", fn)
 			continue
 		log.info("Reading project %s", fn)
 
 		data = storage.read_object(os.path.join(project_folder, fn, "trend.pik"))
-		print data
-		exit(0)
 		projects_data.append(data)
 		if len(data["means"]) < themin:
 			themin = len(data["means"])
@@ -121,7 +120,7 @@ def main(options):
 
 	# colors 'b', 'g', 'r', 'c', 'm', 'y', 'k', 'w'
 	# markers : https://matplotlib.org/api/markers_api.html
-	markers = ["o", "v", "^", "<", ">", "+", "x", "p", "*", "8", "d", "H", "D", "1", "2", "3"]
+	markers = ["o", "v", "^", "<", ">", "+", "x", "p", "*", "8", "d", "H", "D", "1", "2", "3", "."]
 	assert(len(markers) >= NUM_COLORS)
 
 

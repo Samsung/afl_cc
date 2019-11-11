@@ -227,7 +227,7 @@ def main(options):
 			o-n-c-blab/
 			etc/
 	"""
-	subfolders = [fn for fn in os.listdir(project_folder) if storage.isdir(os.path.join(project_folder, fn)) if fn != "in"]
+	subfolders = [fn for fn in os.listdir(project_folder) if storage.isdir(os.path.join(project_folder, fn)) if fn != "in" and not fn.startswith("__results_")]
 	log.info("Found %u projects", len(subfolders))
 
 	# read data. This will bail out if something is wrong

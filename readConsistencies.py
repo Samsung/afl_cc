@@ -22,7 +22,7 @@ def readOptions():
 	parser.add_argument('-p', "--project", required=True, help="project folder")
 	parser.add_argument('-b', "--baseline_folder", required=False, default="o-o-o-none", help="where to find the stability.pik")
 	parser.add_argument('-c', "--coverage", required=True, choices=['Lines', 'Edges', 'BBs'])
-	parser.add_argument('-s', "--stats", choices=['mean', 'median'], required=True, help="median/95-percentile oe mean/std")
+	parser.add_argument('-s', "--stats", choices=['mean', 'median'], required=True, help="median/95-percentile or mean/std")
 	parser.add_argument("--ignore-projects", required=False, help="List of project names to ignore", type=str)
 	parser.add_argument('--only-projects', required=False, help="List of projects to process", type=str)
 	parser.add_argument("--ignore-fuzzers", required=False, help="List of fuzzers to ignore", type=str)

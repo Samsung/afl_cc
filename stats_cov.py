@@ -22,7 +22,6 @@ def readOptions():
 	if args.only:
 		args.only = [item for item in args.only.split(',')]
 	return args
-choices=['servers', 'storage', 'all']
 
 # class ProjectRun:
 
