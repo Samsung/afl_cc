@@ -208,6 +208,7 @@ def main(options):
 	ax.set_axisbelow(True) 
 	plt.xticks(y_pos, histo_names)
 	plt.xticks(xrange(len(histo_names)), rotation=rotate)
+	plt.axhline(y=0, color='black', linewidth=0.5)
 
 	phigh = max(phisto_values)
 	nlow = max(nhisto_values)
