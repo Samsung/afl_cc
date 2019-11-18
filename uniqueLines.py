@@ -72,7 +72,7 @@ def main(options):
 	fuzzers_mappings={"qsym": "QSYM", "o-o-o-newdict": "V_AD", "o-n-c-all-olddict": "C_MD_FBSP", "o-o-o-oldict": "V_MD", \
 						"o-n-c-all-noopt": "C_AD_FBSP", "o-n-c-all-opt": "C_OD_FBSP", "o-n-c-notdict-noopt": "C_AD_LBSP", \
 						"o-n-c-none-opt": "C_OD", "o-n-c-all-none": "C_FBSP", "angora": "Angora", "o-n-c-nodict-opt": "C_OD_LBSP",
-						"o-o-o-none": "V_O3", "o-o-o-none0": "V_O0", "o-o-o-mopt" : "MOpt", "o-o-l": "LAF_INTEL", "o-o-l-cc": "C_LAF-INTEL", \
+						"o-o-o-none": "V_O3", "o-o-o-none0": "V_O0", "o-o-o-mopt" : "MOpt", "o-o-l": "LAF-INTEL", "o-o-l-cc": "C_LAF-INTEL", \
 						"o-n-c-none-newdict": "C_AD"}
 
 	assert (fuzzer in fuzzers_list)

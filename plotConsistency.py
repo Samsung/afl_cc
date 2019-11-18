@@ -84,7 +84,7 @@ def main(options):
 
 	histo_values = data
 	xaxis = histo_names
-	yaxis = coverage + " covered (\\%)"
+	yaxis = coverage[:-1] + " coverage consistency (\\%)"
 	y_pos = np.arange(len(histo_names))
 
 	the_sum = sum(histo_values)
