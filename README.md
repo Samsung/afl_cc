@@ -5,58 +5,58 @@ This is built on top of [AFL fuzzer](https://github.com/google/AFL). There's a l
 Prerequesites (tested on Ubuntu 16.04.6 LTS)
 -------------------------------------------
 ```console
-    me@machine:$ sudo apt-get install make gcc cmake texinfo bison
-    me@machine:$ export AFL_CONVERT_COMPARISON_TYPE=NONE -- this is explained later
-	me@machine:$ export AFL_COVERAGE_TYPE=ORIGINAL -- this is explained later
-	me@machine:$ export AFL_BUILD_TYPE=FUZZING -- this is explained later
-	me@machine:$ export AFL_DICT_TYPE=NORMAL -- this is explained later
+me@machine:$ sudo apt-get install make gcc cmake texinfo bison
+me@machine:$ export AFL_CONVERT_COMPARISON_TYPE=NONE -- this is explained later
+me@machine:$ export AFL_COVERAGE_TYPE=ORIGINAL -- this is explained later
+me@machine:$ export AFL_BUILD_TYPE=FUZZING -- this is explained later
+me@machine:$ export AFL_DICT_TYPE=NORMAL -- this is explained later
 ```
 
 Quick Installation (supports fuzzing only):
 ----------------------------------------------
 ```console
-    me@machine:$ sudo apt-get install llvm-3.8 clang-3.8
-    me@machine:$ export LLVM_CONFIG=`which llvm-config-3.8`
-    me@machine:$ git clone https://github.com/Samsung/afl_cc.git && cd afl_cc
-	me@machine:$ export AFL_ROOT=$PWD
-    me@machine:$ make
-	me@machine:$ cd $AFL_ROOT/llvm_mode && make && cd -
-	# if this fails with error "/usr/bin/ld: unrecognized option '--no-keep-files-mapped'", install gold linker
+me@machine:$ sudo apt-get install llvm-3.8 clang-3.8
+me@machine:$ export LLVM_CONFIG=`which llvm-config-3.8`
+me@machine:$ git clone https://github.com/Samsung/afl_cc.git && cd afl_cc
+me@machine:$ export AFL_ROOT=$PWD
+me@machine:$ make
+me@machine:$ cd $AFL_ROOT/llvm_mode && make && cd -
+# if this fails with error "/usr/bin/ld: unrecognized option '--no-keep-files-mapped'", install gold linker
 ```
 Long Installation (supports both fuzzing and coverage extraction):
 --------------------------------------------------------------------
 ```console
-    me@machine:$ git clone https://github.com/Samsung/afl_cc.git && cd afl_cc
-	me@machine:$ export AFL_ROOT=$PWD
-	# support for gold plugin
-	me@machine:$ ln -s /usr/bin/ld.gold /usr/bin/ld # Note: you may need to rm /usr/bin/ld first
-	# build clang/llvm 3.8
-    me@machine:$ cd ../
-    me@machine:$ git clone https://github.com/llvm-mirror/llvm.git -b release_38 --single-branch --depth 1
-    me@machine:$ cd llvm/tools
-    me@machine:$ git clone https://github.com/llvm-mirror/clang.git -b release_38 --single-branch --depth 1
-    me@machine:$ cp -R ../../afl_cc/clang_format_fixes/clang/* clang/ # apply some patches
-    me@machine:$ cd ..
-    me@machine:$ mkdir build && cd build
-    # remove/update -DLLVM_TARGETS_TO_BUILD="X86" if you're buildinf for a different architecture 
-    me@machine:$ cmake -DLLVM_BINUTILS_INCDIR=/usr/include -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DLLVM_TARGETS_TO_BUILD="X86" ../ -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0"
-    me@machine:$ cmake --build .
-    me@machine:$ cd bin && export LLVM_BINDIR=$PWD
-    me@machine:$ export LLVM_CONFIG=$LLVM_BINDIR/llvm-config
-    # build AFL
-    me@machine:$ cd $AFL_ROOT
-    me@machine:$ make clean && make
-	me@machine:$ cd llvm_mode && make && cd -
-	me@machine:$ cd clang_rewriters/ && make && cd -
-	me@machine:$ cd dsa/lib/DSA && make && cd -
-	me@machine:$ cd dsa/lib/AssistDS && make && cd -
+me@machine:$ git clone https://github.com/Samsung/afl_cc.git && cd afl_cc
+me@machine:$ export AFL_ROOT=$PWD
+# support for gold plugin
+me@machine:$ ln -s /usr/bin/ld.gold /usr/bin/ld # Note: you may need to rm /usr/bin/ld first
+# build clang/llvm 3.8
+me@machine:$ cd ../
+me@machine:$ git clone https://github.com/llvm-mirror/llvm.git -b release_38 --single-branch --depth 1
+me@machine:$ cd llvm/tools
+me@machine:$ git clone https://github.com/llvm-mirror/clang.git -b release_38 --single-branch --depth 1
+me@machine:$ cp -R ../../afl_cc/clang_format_fixes/clang/* clang/ # apply some patches
+me@machine:$ cd ..
+me@machine:$ mkdir build && cd build
+# remove/update -DLLVM_TARGETS_TO_BUILD="X86" if you're buildinf for a different architecture 
+me@machine:$ cmake -DLLVM_BINUTILS_INCDIR=/usr/include -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DLLVM_TARGETS_TO_BUILD="X86" ../ -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0"
+me@machine:$ cmake --build .
+me@machine:$ cd bin && export LLVM_BINDIR=$PWD
+me@machine:$ export LLVM_CONFIG=$LLVM_BINDIR/llvm-config
+# build AFL
+me@machine:$ cd $AFL_ROOT
+me@machine:$ make clean && make
+me@machine:$ cd llvm_mode && make && cd -
+me@machine:$ cd clang_rewriters/ && make && cd -
+me@machine:$ cd dsa/lib/DSA && make && cd -
+me@machine:$ cd dsa/lib/AssistDS && make && cd -
 ```
 
 Setup the aflc-gclang compiler (to generate .bc file):
 -----------------------------------------------------
 ```console
-	me@machine:$ cd $AFL_ROOT
-	me@machine:$ sh setup-aflc-gclang.sh
+me@machine:$ cd $AFL_ROOT
+me@machine:$ sh setup-aflc-gclang.sh
 ```
 
 Control the compilation of the program to generate thru:
@@ -138,13 +138,13 @@ To compile a program for fuzzing:
 2. Set your compiler to $AFL_ROOT/aflc-gclang ($AFL_ROOT/aflc-gclang for C++ programs). For example with autotools you may do:
 
 ```console
-    me@machine:$ CC=$AFL_ROOT/aflc-gclang ./configure
+me@machine:$ CC=$AFL_ROOT/aflc-gclang ./configure
 ```
     
 In our example, we just invokle it directly as:
 
 ```console
-    me@machine:$ $AFL_ROOT/aflc-gclang test.c -o test
+me@machine:$ $AFL_ROOT/aflc-gclang test.c -o test
 ```
 
 aflc-gclang is just a wrapper around [gllvm](https://github.com/SRI-CSL/gllvm), so the following steps should work as long as gllvm does :)
@@ -152,7 +152,7 @@ aflc-gclang is just a wrapper around [gllvm](https://github.com/SRI-CSL/gllvm), 
 3. Extract the bitcote file (.bc) from the executable:
 
 ```console
-    me@machine:$ $AFL_ROOT/aflc-get-bc test
+me@machine:$ $AFL_ROOT/aflc-get-bc test
 ```
 
 Upon success, you will see a corresponding test.bc file. If this fails, hopefully you'll get a comprehensible error message. If not, let me know.
@@ -161,11 +161,7 @@ Upon success, you will see a corresponding test.bc file. If this fails, hopefull
 
 The first build is the same as used by AFL with optimizations enabled (-O3):
 ```console
-    me@machine:$    AFL_COVERAGE_TYPE=ORIGINAL \
-		            AFL_CONVERT_COMPARISON_TYPE=NONE \
-		            AFL_BUILD_TYPE=FUZZING \
-		            AFL_DICT_TYPE=NORMAL \
-		            $AFL_ROOT/aflc-clang-fast -O3 test.bc -o test-afl-original
+me@machine:$ AFL_COVERAGE_TYPE=ORIGINAL AFL_CONVERT_COMPARISON_TYPE=NONE AFL_BUILD_TYPE=FUZZING AFL_DICT_TYPE=NORMAL $AFL_ROOT/aflc-clang-fast -O3 test.bc -o test-afl-original
 ```
 
 You should see a message saying 'WARNING: No coverage file generated', which is normal since we are generating a binary for fuzzing, not to extract coverage information. We will see later how to generate and use coverage files.
@@ -174,11 +170,7 @@ You should also see a message saying 'WARNING: No dictionary was generated' whic
 
 The second build is the one with controlled compilation (we call this build 'normalized'):
 ```console
-    me@machine:$    AFL_COVERAGE_TYPE=ORIGINAL \
-		            AFL_CONVERT_COMPARISON_TYPE=NONE \
-		            AFL_BUILD_TYPE=FUZZING \
-		            AFL_DICT_TYPE=NORMAL \
-		            $AFL_ROOT/aflc-clang-fast test.bc -o test-afl-normalized
+me@machine:$ AFL_COVERAGE_TYPE=ORIGINAL AFL_CONVERT_COMPARISON_TYPE=NONE AFL_BUILD_TYPE=FUZZING AFL_DICT_TYPE=NORMAL $AFL_ROOT/aflc-clang-fast test.bc -o test-afl-normalized
 ```
 
 You should also see 'INFO: Dictionary file generated as test-afl-normalized.dict', which means a dictionary file was generated. This will be used for fuzzing. Open the file:
@@ -195,11 +187,7 @@ You note that the hardcoded values used in if-statements in the source code each
 
 The third build is the one with controlled compilation + byte splitting + optimized dictionary:
 ```console
-    me@machine:$    AFL_COVERAGE_TYPE=NO_COLLISION \
-		            AFL_CONVERT_COMPARISON_TYPE=ALL \
-		            AFL_BUILD_TYPE=FUZZING \
-		            AFL_DICT_TYPE=OPTIMIZED \
-		            $AFL_ROOT/aflc-clang-fast test.bc -o test-afl-no-collision-all-opt
+me@machine:$ AFL_COVERAGE_TYPE=NO_COLLISION AFL_CONVERT_COMPARISON_TYPE=ALL AFL_BUILD_TYPE=FUZZING AFL_DICT_TYPE=OPTIMIZED $AFL_ROOT/aflc-clang-fast test.bc -o test-afl-no-collision-all-opt
 ```
 
 Open the ditcionary file test-afl-no-collision-all-opt.dict:
@@ -223,8 +211,8 @@ Let's examine the fields, for example AFL_C2U_test_c_28_00000009: test_c_28 mean
 As you can see, you may mix and match the AFL macros (AFL_COVERAGE_TYPE, AFL_CONVERT_COMPARISON_TYPE, AFL_BUILD_TYPE and AFL_DICT_TYPE) as you wish to generate the build you want. Since this is not fun and error prone, there is a script you can use to do this for you:
 
 ```console
-    # Note: there's a compile_program++.sh file for C++ programs
-    me@machine:$ sh $AFL_ROOT/compile_program.sh ./test.bc "" ""
+# Note: there's a compile_program++.sh file for C++ programs
+me@machine:$ sh $AFL_ROOT/compile_program.sh ./test.bc "" ""
 ```
 
 The first parameters is the <file.bc>, second is linking flags (none in our case), and the last parameters is arguments to LLVM passes (none in our case). Note that this last parameter only supports something like "-mllvm -fignore-strings-to=func1,func2", where each func1,func2,etc is a function name for which hardcoded arguments should be excluded during dictionary generation. For example if there is a function foo() that prints to stdin (eg foo("hello world")), we may pass "-mllvm -fignore-strings-to=foo" to ignore hardcoded strings from being added to the dictionary. 
@@ -235,21 +223,21 @@ Example 2: running the fuzzer manually:
 --------------------------------------
 Let's first  how to run the 3 builds we generated in the previous section. There's nothing really new here, it's just like running the original AFL. First let's create a starting seed for AFL to use:
 ```console
-    me@machine:$ mkdir in && echo hello >in/hello # create an initial seed
+me@machine:$ mkdir in && echo hello >in/hello # create an initial seed
 ```
 
 Then open 3 terminals:
 Terminal 1:
 ```console
-    me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-original -x ./test-afl-normalized.dict ./test-afl-original @@
+me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-original -x ./test-afl-normalized.dict ./test-afl-original @@
 ```
 Terminal 2:
 ```console
-    me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-normalized-opt -x ./test-afl-normalized-opt.dict ./test-afl-normalized-opt @@
+me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-normalized-opt -x ./test-afl-normalized-opt.dict ./test-afl-normalized-opt @@
 ```
 Terminal 3:
 ```console
-    me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-no-collision-all-opt -x ./test-afl-no-collision-all-opt.dict ./test-afl-no-collision-all-opt @@
+me@machine:$ $AFL_ROOT/afl-fuzz -m none -i ./in/ -o C_OD_FBSP -S test-afl-no-collision-all-opt -x ./test-afl-no-collision-all-opt.dict ./test-afl-no-collision-all-opt @@
 ```
 
 Example 3: running the fuzzer thru scripts:
@@ -262,22 +250,22 @@ TIME=24 This is the time in hours to run the fuzzer for.
 You can change those for your needs. The script will run most of the configurations presented in the paper, except a few that needed some manual changes. If you want to run some of these missing configurations, drop me a message. Let's run the script to see what happens:
 
 ```console
-    me@machine:$ mkdir in && echo hello >in/hello # create an initial seed
-    me@machine:$ echo '"#"' > handcrafted.dict # a manually-generated dictionary with one entry
-    me@machine:$ sh $AFL_ROOT/run_program.sh ./test-afl "" ./in/ handcrafted.dict none
+me@machine:$ mkdir in && echo hello >in/hello # create an initial seed
+me@machine:$ echo '"#"' > handcrafted.dict # a manually-generated dictionary with one entry
+me@machine:$ sh $AFL_ROOT/run_program.sh ./test-afl "" ./in/ handcrafted.dict none
 ```
 
 This will take a while...several weeks if not months in fact :). If you just want to run a quick exmaple instead, use the modified script run_program_example.sh that will run 10 independent runs of one configuration only (C_OD_FBSP) for just 30 seconds each. The following command should take a few minutes to complete:
 
 ```console
-    me@machine:$ sh $AFL_ROOT/run_program_example.sh ./test-afl "" ./in/ handcrafted.dict none
+me@machine:$ sh $AFL_ROOT/run_program_example.sh ./test-afl "" ./in/ handcrafted.dict none
 ```
 
 After completion, there will be a bew folder called o-n-c-all-opt: this is the configuration C_OD_FBSP. The name is different because before writing the paper, we used different names in our scripts... Not ideal... but hey!
 
 Let's check what is under o-n-c-all-opt: You should see at least 10 folders (since N_RUNS=10), each containing the result of an independent run. For example there's one folder called 0-1: it contains 3 subfolders that each corresponds to an AFL instance. Each of these instances ran in parallel for 30 seconds and shared their seeds. Each of these subfolders has a weird-looking name generated by our script. It starts with the name of the binary that was run with some additional numbers to make the subfolder unique. For example there is one called test-afl-no-collision-all-opt-1-3, which ran the test-afl-no-collision-all-opt binary. You can verify this by using:
 ```console
-    me@machine:$ grep command_line C_OD_FBSP/0-1/test-afl-no-collision-all-opt-1-3/fuzzer_stats
+me@machine:$ grep command_line C_OD_FBSP/0-1/test-afl-no-collision-all-opt-1-3/fuzzer_stats
 ```
 
 This is the same configuration we used to ran manually in the previous section.
@@ -291,17 +279,17 @@ To compile a program to extract coverage information:
 2. Set your compiler to $AFL_ROOT/aflc-gclang-cov ($AFL_ROOT/aflc-gclang-cov++ for C++ programs). For example with autotools you may do:
 
 ```console
-    me@machine:$ CC=$AFL_ROOT/aflc-gclang-cov ./configure
+me@machine:$ CC=$AFL_ROOT/aflc-gclang-cov ./configure
 ```
     
 For our toy example, we just invokle it directly as:
 
 ```console
-    me@machine:$ $AFL_ROOT/aflc-gclang-cov test.c -o test-coverage
+me@machine:$ $AFL_ROOT/aflc-gclang-cov test.c -o test-coverage
 ```
 
 Under the hood, this creates a file called 'normalized_test.c' which normalizes the file so that each statement/condition appears on a unique line. This way we can tell apart fuzzers that pass each of these conditions. Open the file:
-```console
+```c
 [...]
 int main(int argc, char *argv[]) {
 
@@ -325,7 +313,7 @@ int main(int argc, char *argv[]) {
 3. Extract the bitcote file (.bc) from the executable:
 
 ```console
-    me@machine:$ $AFL_ROOT/aflc-get-bc test-coverage
+me@machine:$ $AFL_ROOT/aflc-get-bc test-coverage
 ```
 
 Upon success, you will see a corresponding test-coverage.bc file. If this fails, hopefully you'll get a comprehensible error message. If not, let me know.
@@ -333,10 +321,7 @@ Upon success, you will see a corresponding test-coverage.bc file. If this fails,
 4. Finish the compilation by invoking aflc-clang-fast with coverage configuration (instead of the usual afl-clang-fast that AFL uses):
 
 ```console
-    me@machine:$    AFL_COVERAGE_TYPE=ORIGINAL \
-		            AFL_CONVERT_COMPARISON_TYPE=NONE \
-		            AFL_BUILD_TYPE=COVERAGE \
-		            $AFL_ROOT/aflc-clang-fast test-coverage.bc -o test-coverage # WARNING: this replaces the test-coverage already present
+me@machine:$ AFL_COVERAGE_TYPE=ORIGINAL AFL_CONVERT_COMPARISON_TYPE=NONE AFL_BUILD_TYPE=COVERAGE $AFL_ROOT/aflc-clang-fast test-coverage.bc -o test-coverage # WARNING: this replaces the test-coverage already present
 ```
 
 You will see a message 'WARNING: No dictionary was generated', which is normal because we're generating a build for coverage, so we don't need a dictionary.
@@ -361,20 +346,20 @@ You will also see the message 'INFO: Mapping (BB<->SRC) file generated as test-c
 To run the extrction, simply use AFL as:
 
 ```console
-    me@machine:$ $AFL_ROOT/afl-fuzz -m none -i INFOLDER -o OUTFOLDER ./test-coverage @@
-    # for example for our toy example if we want to extract the coverage for one of the instances:
-    me@machine:$ mkdir C_OD_FBSP/incov
-    me@machine:$ cp C_OD_FBSP/test-afl-no-collision-all-opt/queue/* C_OD_FBSP/incov
-    me@machine:$ cp C_OD_FBSP/test-afl-no-collision-all-opt/crashes/* C_OD_FBSP/incov
-    me@machine:$ AFL_NO_UI=1 AFL_NO_CAL=1 AFL_SKIP_CRASHES=1 $AFL_ROOT/afl-coverage -m none -i C_OD_FBSP/incov -o C_OD_FBSP/outcov ./test-coverage @@
+me@machine:$ $AFL_ROOT/afl-fuzz -m none -i INFOLDER -o OUTFOLDER ./test-coverage @@
+# for example for our toy example if we want to extract the coverage for one of the instances:
+me@machine:$ mkdir C_OD_FBSP/incov
+me@machine:$ cp C_OD_FBSP/test-afl-no-collision-all-opt/queue/* C_OD_FBSP/incov
+me@machine:$ cp C_OD_FBSP/test-afl-no-collision-all-opt/crashes/* C_OD_FBSP/incov
+me@machine:$ AFL_NO_UI=1 AFL_NO_CAL=1 AFL_SKIP_CRASHES=1 $AFL_ROOT/afl-coverage -m none -i C_OD_FBSP/incov -o C_OD_FBSP/outcov ./test-coverage @@
 ```
 
 You can find the coverage information in a file C_OD_FBSP/outcov/coverage_bitmap. Each bit set corresponds to the basic bock ID visited. Once you have the BB ID, you can lookup which lines it corresponds to using the test-coverage.c2s file.
 
 Let's see what the coverage file says:
 ```console
-    me@machine:$ xxd -b C_OD_FBSP/outcov/coverage_bitmap
-        00000000: 11110101 00011111
+me@machine:$ xxd -b C_OD_FBSP/outcov/coverage_bitmap
+             00000000: 11110101 00011111
 ```
 
 Remeber that the order of bits is shown from most significant to less significant: so the bit 0 is the last of the first blob, bit 1 is the second-most-right bit in the firt blob, etc. We see the bit 0 is set, which, according to the test-coverage.c2s file, corresponds to line 1442. So far so good. WARNING: the line numbers correspond to the normalized file normalized_test.c!
