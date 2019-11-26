@@ -12,8 +12,6 @@ run_command "Installing go" sudo add-apt-repository -y ppa:gophers/archive && su
 
 run_command "cd $DIR" cd $DIR
 
-#run_command "Cloning repo AFL transformations" git clone git@github.sisa.samsung.com:KnoxSecurity/compiler_transformation_AFL.git && cd compiler_transformation_AFL
-
 # note: we could also use wllvm which is the python version available at https://github.com/SRI-CSL/whole-program-llvm
 # i use the go version because it's supposed to be faster... available at https://github.com/SRI-CSL/gllvm.git
 # run_command "Cloning repo gclang" git clone https://github.com/SRI-CSL/gllvm.git

@@ -10,7 +10,7 @@ RUN_BENCHMARK=$LIB_DIR/run_benchmark.sh
 N_RUNS=10 		# number of runs to get some statistical confidence :)
 N_INSTANCE=1	# how many instances of the same afl do we run together
 TIME=24			# time to run for, in hrs
-USE_MASTER=0	# run one master. 0 means all instances run as slaves
+USE_MASTER=0	# run one master. 0 means all instances run as slaves, as in our experiments
 
 run_one() 
 {
@@ -54,56 +54,82 @@ run_program()
 	
 	if [ $USE_MASTER -eq 0 ]; then
 
-		# original normalized no-collision-*-opt 
+		# C_OD_FBSP
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-all-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-opt $EXE-normalized.dict $EXE-normalized-opt.dict $EXE-no-collision-all-opt.dict $TIME $USE_MASTER || err_exit "7"
+
+		# C_OD_LBSP
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-notdict-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-nodict-opt $EXE-normalized.dict $EXE-normalized-opt.dict $EXE-no-collision-notdict-opt.dict $TIME $USE_MASTER || err_exit "8"
+
+		# C_OD
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-none-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-none-opt $EXE-normalized.dict $EXE-normalized-opt.dict $EXE-no-collision-none-opt.dict $TIME $USE_MASTER || err_exit "9"
 
-		# original normalized no-collision-all-noopt 
+		# C_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-none none none none $TIME $USE_MASTER || err_exit "4"
+
+		# C_AD_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-noopt $EXE-normalized.dict $EXE-normalized.dict $EXE-no-collision-all-noopt.dict $TIME $USE_MASTER || err_exit "5"
+
+		# C_MD_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-olddict $EXE-old.dict $EXE-old.dict $EXE-old.dict $TIME $USE_MASTER || err_exit "6"
+		
 		if [ $BINDICT != "none" ]; then
 			run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-autodict $EXE-auto.dict $EXE-auto.dict $EXE-auto.dict $TIME $USE_MASTER || err_exit "6"
 		fi
 
-		# original original original
+		# V_MD
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-oldict $EXE-old.dict $EXE-old.dict $EXE-old.dict $TIME $USE_MASTER || err_exit "1"
+
+		# V_O3
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-none none none none $TIME $USE_MASTER || err_exit "2"
+
+		# V_AD
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-newdict $EXE-normalized.dict $EXE-normalized.dict $EXE-normalized.dict $TIME $USE_MASTER || err_exit "3"
+		
 		if [ $BINDICT != "none" ]; then
 			run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-autodict $EXE-auto.dict $EXE-auto.dict $EXE-auto.dict $TIME $USE_MASTER || err_exit "3"
 		fi
 
-		# original normalized no-collision-notdict-noopt 
+		# C_AD_LBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-notdict-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-notdict-noopt $EXE-normalized.dict $EXE-normalized.dict $EXE-no-collision-notdict-noopt.dict $TIME $USE_MASTER || err_exit "10"
-
 	else
 
-		# original normalized no-collision-*-opt 
+		# C_OD_FBSP
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-all-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-opt none $EXE-normalized-opt.dict none $TIME $USE_MASTER || err_exit "7"
+
+		# C_OD_LBSP
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-notdict-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-nodict-opt none $EXE-normalized-opt.dict none $TIME $USE_MASTER || err_exit "8"
+
+		# C_OD
 		run_one $EXE-original $EXE-normalized-opt $EXE-no-collision-none-opt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-none-opt none $EXE-normalized-opt.dict none $TIME $USE_MASTER || err_exit "9"
 
-		# original normalized no-collision-all-noopt 
+		# C_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-none none none none $TIME $USE_MASTER || err_exit "4"
+
+		# C_AD_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-noopt none $EXE-normalized.dict none $TIME $USE_MASTER || err_exit "5"
+
+		# C_MD_FBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-olddict none $EXE-old.dict none $TIME $USE_MASTER || err_exit "6"
+
 		if [ $BINDICT != "none" ]; then
 			run_one $EXE-original $EXE-normalized $EXE-no-collision-all-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-all-autodict $EXE-auto.dict $EXE-auto.dict $EXE-auto.dict $TIME $USE_MASTER || err_exit "6"
 		fi
 
-		# original original original
+		# V_MD
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-oldict none $EXE-old.dict none $TIME $USE_MASTER || err_exit "1"
+
+		# V_O3
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-none none none none $TIME $USE_MASTER || err_exit "2"
+
+		# V_AD
 		run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-newdict none $EXE-normalized.dict none $TIME $USE_MASTER || err_exit "3"
+
 		if [ $BINDICT != "none" ]; then
 			run_one $EXE-original $EXE-original $EXE-original "$ARGS" $N_RUNS $N_INSTANCE $IN o-o-o-autodict none $EXE-auto.dict none $TIME $USE_MASTER || err_exit "3"
 		fi
 
-		# original normalized no-collision-notdict-noopt 
+		# C_AD_LBSP
 		run_one $EXE-original $EXE-normalized $EXE-no-collision-notdict-noopt "$ARGS" $N_RUNS $N_INSTANCE $IN o-n-c-notdict-noopt none $EXE-normalized.dict none $TIME  || err_exit "10"
-
 	fi
 }
 

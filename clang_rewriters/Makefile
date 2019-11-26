@@ -19,9 +19,9 @@ LLVM_BIN_DIR 	:= $(shell $(LLVM_CONFIG) --bindir)
 LLVM_SRC_DIR 	:= $(shell $(LLVM_CONFIG) --src-root)
 LLVM_BUILD_DIR 	:= $(LLVM_SRC_DIR)/build
 
-# Clang. Note: projects is hardcoded
-CLANG_INCS		:= -I$(LLVM_SRC_DIR)/projects/clang/include/ \
-				   -I$(LLVM_BUILD_DIR)/projects/clang/include/
+# Clang. Note: tools is hardcoded
+CLANG_INCS		:= -I$(LLVM_SRC_DIR)/tools/clang/include/ \
+				   -I$(LLVM_BUILD_DIR)/tools/clang/include/
 
 
 CXX				:= $(LLVM_BIN_DIR)/clang++

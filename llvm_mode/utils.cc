@@ -130,7 +130,7 @@ bool is_llvm_dbg_intrinsic(Instruction & instr) {
   if (calledFunc != NULL) {
     const bool ret = calledFunc->isIntrinsic() &&
                      starts_with(calledFunc->getName().str(), "llvm.");
-    llvm::errs() << instr << ":" << ret << "\n";
+    //llvm::errs() << instr << ":" << ret << "\n";
     return ret;
   } else { 
     return false;
