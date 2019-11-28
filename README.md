@@ -1,6 +1,6 @@
 # Fuzzing with controlled compilation
 
-This is built on top of [AFL fuzzer](https://github.com/google/AFL). There's a lot of commands on this page, and not everything will make sense :). If you have questions, don't hesitate to contact me!
+This is the repo for the code we used in the paper [Improving Fuzzing through Controlled Compilation](controlled_compilation.pdf). It is built using [AFL fuzzer](https://github.com/google/AFL). There's a lot of commands on this page, and not everything will make sense :). If you have questions, don't hesitate to contact me!
 
 Prerequesites (tested on Ubuntu 16.04.6 LTS)
 -------------------------------------------
