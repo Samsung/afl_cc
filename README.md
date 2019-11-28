@@ -329,19 +329,19 @@ You will see a message 'WARNING: No dictionary was generated', which is normal b
 
 You will also see the message 'INFO: Mapping (BB<->SRC) file generated as test-coverage.c2s', which contains the mapping between basic block IDs and line numbers (note that these basic block IDs are separate from the ones used by AFL for edge calculation). Open it:
 ```
-0=/home/lolo/test.c:1442
-1=/home/lolo/test.c:1443,/home/lolo/test.c:1444
-2=/home/lolo/test.c:1447,/home/lolo/test.c:1448
-3=/home/lolo/test.c:1449,/home/lolo/test.c:1450
-4=/home/lolo/test.c:1453,/home/lolo/test.c:1455
-5=/home/lolo/test.c:1456
-6=/home/lolo/test.c:1457
-7=/home/lolo/test.c:1458
-8=/home/lolo/test.c:1459
-9=/home/lolo/test.c:1455,/home/lolo/test.c:1460
-10=/home/lolo/test.c:1461
-11=/home/lolo/test.c:1463,/home/lolo/test.c:1465
-12=/home/lolo/test.c:1466
+0=/home/me/test.c:1442
+1=/home/me/test.c:1443,/home/me/test.c:1444
+2=/home/me/test.c:1447,/home/me/test.c:1448
+3=/home/me/test.c:1449,/home/me/test.c:1450
+4=/home/me/test.c:1453,/home/me/test.c:1455
+5=/home/me/test.c:1456
+6=/home/me/test.c:1457
+7=/home/me/test.c:1458
+8=/home/me/test.c:1459
+9=/home/me/test.c:1455,/home/me/test.c:1460
+10=/home/me/test.c:1461
+11=/home/me/test.c:1463,/home/me/test.c:1465
+12=/home/me/test.c:1466
 ```
 
 To run the extraction, use afl-coverage as:
@@ -365,12 +365,12 @@ me@machine:$ xxd -b C_OD_FBSP/outcov/coverage_bitmap
 
 Remeber that the order of bits is shown from most significant to less significant: so the bit 0 is the last of the first blob, bit 1 is the second-most-right bit in the first blob, etc. We see the bit 0 is set, which, according to the test-coverage.c2s file, corresponds to line 1442. So far so good. WARNING: the line numbers correspond to the normalized file normalized_test.c, not the original test.c!
 ```
-0=/home/lolo/test.c:1442
+0=/home/me/test.c:1442
 ```
 
 Note that bit 1 and 3 are not set. Bit 1 corresponds to the basic block of lines 1443 ans 1444:
 ```
-1=/home/lolo/test.c:1443,/home/lolo/test.c:1444
+1=/home/me/test.c:1443,/home/me/test.c:1444
 ```
 which correspond to
 ```c
@@ -379,7 +379,7 @@ which correspond to
 ```
 This makes sense: AFL was run with an input file as argument, so these lines were never visited. Similarily, bit 3 corresponds to lines 1449 and 1450:
 ```
-3=/home/lolo/test.c:1449,/home/lolo/test.c:1450
+3=/home/me/test.c:1449,/home/me/test.c:1450
 ```
 which corresponds to the code 
 ```c
