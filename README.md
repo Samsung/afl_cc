@@ -363,12 +363,12 @@ me@machine:$ xxd -b C_OD_FBSP/outcov/coverage_bitmap
              00000000: 11110101 00011111
 ```
 
-Remeber that the order of bits is shown from most significant to less significant: so the bit 0 is the last of the first blob, bit 1 is the second-most-right bit in the first blob, etc. We see the bit 0 is set, which, according to the test-coverage.c2s file, corresponds to line 1442. So far so good. WARNING: the line numbers correspond to the normalized file normalized_test.c, not the original test.c!
+Each bit corresponds to a basic block. Basic block 0 is represented by bit 0 and is the right-most bit of the first byte. Similarly, basic block 1 is represented by bit 1 and is the second right-most bit of the first byte. Basic block 8 is represented by bit 8 and is the right-most bit of the second byte (functions for setting and getting the bit is in file [utils.h](blob/master/utils.h)). Let's look at some examples. In the coverage_bitmap file, bit 0 is set, which, according to the test-coverage.c2s file, corresponds to line 1442. So far so good. WARNING: the line numbers correspond to the normalized file normalized_test.c, not the original test.c!
 ```
 0=/home/me/test.c:1442
 ```
 
-Note that bit 1 and 3 are not set. Bit 1 corresponds to the basic block of lines 1443 ans 1444:
+Bit 1 and 3 are not set. Bit 1 corresponds to the basic block of lines 1443 and 1444:
 ```
 1=/home/me/test.c:1443,/home/me/test.c:1444
 ```
