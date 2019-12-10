@@ -262,7 +262,7 @@ me@machine:$ sh $AFL_ROOT/run_program.sh ./test-afl "" ./in/ handcrafted.dict no
 This will take a while...several weeks if not months in fact :). If you just want to run a quick example instead, use the modified script run_program_example.sh that will run 10 independent runs of one configuration only (C_OD_FBSP) for just 30 seconds each. The following command should take a few minutes to complete:
 
 ```console
-me@machine:$  # cleanup directories created before
+me@machine:$ rm -rf o-n-c-all-opt && rm -rf C_OD_FBSP # cleanup directories created before
 me@machine:$ sh $AFL_ROOT/run_program_example.sh ./test-afl "" ./in/ handcrafted.dict none
 ```
 
