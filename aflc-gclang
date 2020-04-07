@@ -114,6 +114,7 @@ fi
 # Note: I want to use -fdiagnostics-absolute-paths, but not supported until 4.0, I believe
 # so instead I loop over input file and replace them with fullpath names
 FULL_ARGS=""
+ARGS=`echo "$ARGS" | sed -e :a -e 's/^\(\([^"]*"[^"]*"[^"]*\)*[^"]*"[^"]*\) /\1/;ta'`
 for arg in $ARGS; do
 	if file_exists $arg; then
 		fp=`get_full_path_of_file $arg`
