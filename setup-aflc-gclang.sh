@@ -7,8 +7,12 @@ DIR=$LIB_DIR
 
 # # SETUP_DIR="`dirname \"$0\"`"
 # # SETUP_DIR="`( cd \"${SETUP_DIR}\" && pwd )`"
-
-run_command "Installing go" sudo add-apt-repository -y ppa:gophers/archive && sudo apt-get update && sudo apt-get -y install golang-1.10-go
+SUDO=
+EUID="$(id -u)"
+if [ "$EUID" != "0" ]; then
+	SUDO=sudo
+fi
+run_command "Installing go" $SUDO add-apt-repository -y ppa:gophers/archive && $SUDO apt-get update && $SUDO apt-get -y install golang-1.10-go
 
 run_command "cd $DIR" cd $DIR
 
