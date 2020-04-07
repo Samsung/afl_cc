@@ -5,25 +5,25 @@
 # define ASSERT(x) if (!(x)) { printf("assert( " #x " ) failed in file %s at line %u\n", __FILENAME__, __LINE__); exit(-1); }
 #endif
 
-inline u32 get_bbmap_size(u32 size) {
+static inline u32 get_bbmap_size(u32 size) {
   return (((size - 1) / 8) + 1);
 }
 
-inline u32 get_map_size(u32 size) {
+static inline u32 get_map_size(u32 size) {
   ASSERT(size);
   size = (((size - 1) / 8) + 1);
   ASSERT((size <= (u32)(-1) / 8) && "Map size too large");
   return size * 8;
 }
 
-inline void set_bit_from_bb_id(u8 * bb_trace_map, u32 trace_map_size, u32 bb_id) {
+static inline void set_bit_from_bb_id(u8 * bb_trace_map, u32 trace_map_size, u32 bb_id) {
 	u32 byte_n = bb_id / 8;
   u32 bit = (bb_id & 7);
   ASSERT(byte_n < trace_map_size); /* Sanity check things work as expected... */
   bb_trace_map[byte_n] |= (1 << bit);
 }
 
-inline u8 get_bit_from_bb_id(u8 * bb_trace_map, u32 trace_map_size, u32 bb_id) {
+static inline u8 get_bit_from_bb_id(u8 * bb_trace_map, u32 trace_map_size, u32 bb_id) {
 	u32 byte_n = bb_id / 8;
   u32 bit = (bb_id & 7);
   ASSERT(byte_n < trace_map_size); /* Sanity check things work as expected... */
