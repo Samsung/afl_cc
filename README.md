@@ -5,7 +5,7 @@ This is the repo for the code we used in the paper [Improving Fuzzing through Co
 Prerequesites (tested on Ubuntu 16.04.6 LTS)
 -------------------------------------------
 ```console
-me@machine:$ sudo apt-get install make gcc cmake texinfo bison
+me@machine:$ sudo apt-get install make gcc cmake texinfo bison software-properties-common
 me@machine:$ export AFL_CONVERT_COMPARISON_TYPE=NONE -- this is explained later
 me@machine:$ export AFL_COVERAGE_TYPE=ORIGINAL -- this is explained later
 me@machine:$ export AFL_BUILD_TYPE=FUZZING -- this is explained later
