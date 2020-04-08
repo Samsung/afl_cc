@@ -2,10 +2,10 @@
 
 This is the repo for the code we used in the paper [Improving Fuzzing through Controlled Compilation](controlled_compilation.pdf). It is built using [AFL fuzzer](https://github.com/google/AFL). There's a lot of commands on this page, and not everything will make sense :). If you have questions, don't hesitate to contact me!
 
-Prerequesites (tested on Ubuntu 16.04.6 LTS)
+Prerequisites (tested on Ubuntu 16.04.6 LTS)
 -------------------------------------------
 ```console
-me@machine:$ sudo apt-get install make gcc cmake texinfo bison software-properties-common
+me@machine:$ sudo apt-get install make gcc cmake texinfo bison software-properties-common binutils-dev
 me@machine:$ export AFL_CONVERT_COMPARISON_TYPE=NONE -- this is explained later
 me@machine:$ export AFL_COVERAGE_TYPE=ORIGINAL -- this is explained later
 me@machine:$ export AFL_BUILD_TYPE=FUZZING -- this is explained later
