@@ -77,6 +77,7 @@ static u8 is_persistent;
 /* AFL area setup */
 
 static void __afl_init_area(void) {
+  if (__afl_area_ptr) return; // already done when forkserver creation is deferred
   __afl_area_size = get_map_size(__afl_get_area_size());
   __afl_area_initial = malloc(__afl_area_size); assert (__afl_area_initial);
   __afl_area_ptr = __afl_area_initial;
@@ -89,6 +90,7 @@ static void __afl_release_area(void) {
 }
 
 static void __afl_init_bbtrace(void) {
+  if (__afl_bbtrace_ptr) return; // already done when forkserver creation is deferred
   /* Note: this only records a hit/no hit, so needs only one bit */
   __afl_bbtrace_size = get_bbmap_size(__afl_get_bbarea_size());
 
@@ -132,6 +134,8 @@ static void __afl_map_shm(void) {
 }
 
 static void __afl_unmap_shm(void) {
+  u8 *id_str = getenv(SHM_ENV_VAR);
+  if (!id_str) return;
   assert(__afl_area_ptr);
   if (-1 == shmdt(__afl_area_ptr)) {
     exit(errno);
@@ -156,6 +160,8 @@ static void __afl_map_bbtrace_shm(void) {
 }
 
 static void __afl_unmap_bbtrace_shm(void) {
+  u8 *id_str = getenv(SHM_ENV_BBTRACE_VAR);
+  if (!id_str) return;
   assert(__afl_bbtrace_ptr);
   if (-1 == shmdt(__afl_bbtrace_ptr)) {
     exit(errno);
@@ -177,6 +183,7 @@ static void __afl_start_forkserver(void) {
   s32 child_pid;
 
   u8  child_stopped = 0;
+  u32 prev_tracing = 0;
 
   /* Phone home and tell the parent that we're OK. If parent isn't there,
      assume we're not running in forkserver mode and just execute program. */
@@ -187,6 +194,7 @@ static void __afl_start_forkserver(void) {
 
     u32 ctrl_info;
     u32 was_killed;
+    u32 curr_tracing;
     int status;
 
     /* Wait for parent by reading from the pipe. Abort if read fails. */
@@ -194,14 +202,31 @@ static void __afl_start_forkserver(void) {
     if (read(FORKSRV_FD, &ctrl_info, 4) != 4) _exit(1);
 
     was_killed = ctrl_info & 1;
+    curr_tracing = ctrl_info & 2;
 
     /* If we stopped the child in persistent mode, but there was a race
        condition and afl-fuzz already issued SIGKILL, write off the old
        process. */
 
     if (child_stopped && was_killed) {
+
       child_stopped = 0;
-      if (waitpid(child_pid, &status, 0) < 0) _exit(1);
+      
+      if (waitpid(child_pid, &status, 0) < 0) 
+        _exit(1);
+
+    } else if (child_stopped && curr_tracing != prev_tracing) { // can only happen in persistent mode - child_stopped
+        
+        // kill the child to force a re-spawn
+        kill(child_pid, SIGKILL);
+
+       if (waitpid(child_pid, &status, 0) < 0)
+         _exit(1);
+
+       if (!WIFSIGNALED(status))
+       _exit(1);
+
+       child_stopped = 0;
     }
 
     if (!child_stopped) {
@@ -218,7 +243,7 @@ static void __afl_start_forkserver(void) {
         close(FORKSRV_FD);
         close(FORKSRV_FD + 1);
 
-        bb_trace = ctrl_info & 2;
+        bb_trace = curr_tracing; // enable only for the child, not for parent!
 
         return;
   
@@ -251,6 +276,8 @@ static void __afl_start_forkserver(void) {
 
     if (write(FORKSRV_FD + 1, &status, 4) != 4) _exit(1);
 
+    prev_tracing = curr_tracing;
+
   }
 
 }
@@ -261,8 +288,7 @@ static void __afl_start_forkserver(void) {
 int __afl_persistent_loop(unsigned int max_cnt) {
 
   /* This has not been updated for our changes. TODO */
-  exit(-1);
-#if 0
+ 
   static u8  first_pass = 1;
   static u32 cycle_cnt;
 
@@ -275,6 +301,10 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
     if (is_persistent) {
 
+      // zero the bb trace in tracing mode
+      if (bb_trace) {
+         memset(__afl_bbtrace_ptr, 0, __afl_bbtrace_size);
+      }
       memset(__afl_area_ptr, 0, __afl_area_size);
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
@@ -289,6 +319,11 @@ int __afl_persistent_loop(unsigned int max_cnt) {
   if (is_persistent) {
 
     if (--cycle_cnt) {
+
+      // Note: if tracing, we could return 0 here and set __afl_area_ptr = __afl_area_initial;
+      // however, it's better to not exit premautrely because the calibration phase runs the same
+      // seed multiple times to check for stability. Therefore, we're better off restarting the
+      // same child when the (non-)tracing status does not change
 
       raise(SIGSTOP);
 
@@ -308,7 +343,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
     }
 
   }
-#endif
+
   return 0;
 
 }
@@ -350,7 +385,12 @@ __attribute__((constructor(CONST_PRIO))) void __afl_auto_init(void) {
 
   is_persistent = !!getenv(PERSIST_ENV_VAR);
 
-  if (getenv(DEFER_ENV_VAR)) return;
+  if (getenv(DEFER_ENV_VAR)) {
+    // we must initialize those memory regions. In vanilaa afl, those are statically defined, but not here
+    __afl_init_area();
+    __afl_init_bbtrace();
+    return;
+  }
 
   __afl_manual_init();
 
