@@ -32,6 +32,13 @@ export LLVM_COMPILER_PATH=`$LLVM_CONFIG --bindir`
 # remove all -OX from the options
 ARGS=$@
 ARGS=$(echo $ARGS | sed -e 's/-O[^ ]*/-O0/g')
+# remove -g is really important to avoid some crashes such as 
+# ...
+# 3 0x00007fb68b6c44b0 (/lib/x86_64-linux-gnu/libc.so.6+0x354b0)
+# 4 0x00007fb68cafa893 llvm::DwarfUnit::addDIEEntry(llvm::DIE&, llvm::dwarf::Attribute, llvm::DIEEntry) (/usr/lib/x86_64-linux-gnu/libLLVM-3.8.so.1+0xb09893)
+# 5 0x00007fb68cafa8ec llvm::DwarfUnit::addDIEEntry(llvm::DIE&, llvm::dwarf::Attribute, llvm::DIE&) (/usr/lib/x86_64-linux-gnu/libLLVM-3.8.so.1+0xb098ec)
+# ...
+ARGS=$(echo $ARGS | sed -e 's/-g / /g')
 ERR_MV=""
 optE=$(echo $ARGS | grep -q '\-E')
 
@@ -123,7 +130,6 @@ for arg in $ARGS; do
 		FULL_ARGS="$FULL_ARGS $arg"
 	fi
 done
-
 
 $GCLANG -g -Wall -Wextra -pedantic -funroll-loops $FULL_ARGS || { $ERR_MV >/dev/null 2>&1; err_exit "clang"; }
 
