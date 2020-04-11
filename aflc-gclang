@@ -131,7 +131,7 @@ for arg in $ARGS; do
 	fi
 done
 
-$GCLANG -g -Wall -Wextra -pedantic -funroll-loops $FULL_ARGS || { $ERR_MV >/dev/null 2>&1; err_exit "clang"; }
+$GCLANG -Wall -Wextra -pedantic -funroll-loops $FULL_ARGS || { $ERR_MV >/dev/null 2>&1; err_exit "clang"; }
 
 # copy back the original file, and rename the normalized file
 if [ ! -z $CLANG_REWRITERS ] && [ -z $optE ]; then
