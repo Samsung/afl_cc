@@ -80,6 +80,8 @@ namespace {
       utils::DictElt getFromDictAndRemoveOriginal(CallInst & CI, bool & found);
       bool isRecordedInDictionary(CallInst & CI);
       void addToDictionary(CallInst & CI, utils::DictElt elmt, size_t & dictAdded);
+      void visitStructure(Constant * C, const DataLayout & DL, CallInst & CI, size_t & dictAdded);
+      void visitInteger(const StructLayout * SL, Type * T, unsigned idx, Constant * CstInit, CallInst & CI, size_t & dictAdded);
       void harvestConstantArrays(Module &M, size_t & dictAdded);
       void harvestConstantStores(Module &M, size_t & dictAdded);
       void harvestConstantStructs(Module &M, size_t & dictAdded);
@@ -444,6 +446,7 @@ void StrCompare2Unit::harvestConstantStores(Module &M, size_t & dictAdded) {
                   // TODO convention call
                   if (found) {
                     
+                    ASSERT(sys::IsLittleEndianHost);
                     uint64_t Val = CI->getZExtValue();
                     size_t nBytes = CI->getBitWidth() / 8;
                     char buf[8]; /* Max size */
@@ -546,6 +549,77 @@ utils::DictElt StrCompare2Unit::getFromDictAndRemoveOriginal(CallInst & CI, bool
   return found ? list[0] : utils::DictElt("","");
 }
 
+void StrCompare2Unit::visitInteger(const StructLayout * SL, Type * T, unsigned idx, Constant * CstInit, CallInst & CI, size_t & dictAdded) {
+  ASSERT(T->isIntegerTy());
+  uint64_t EltOffset = SL->getElementOffset(idx);
+  unsigned Op = SL->getElementContainingOffset(EltOffset);
+  // Type * t = CstInit->getOperand(Op)->getType(); ASSERT(t);
+  // errs() << "isa1:" << isa<ConstantInt>(CstInit->getOperand(Op)) << "\n";
+  // errs() << "isa2:" << isa<Constant>(CstInit->getOperand(Op)) << "\n";
+  // errs() << "t:" << *CstInit->getOperand(Op)->getType() << "\n";
+  // errs() << "C:" << *cast<Constant>(CstInit->getOperand(Op)) << "\n";
+  // errs() << "s=" << s << "\n";
+  if (!isa<ConstantInt>(CstInit->getOperand(Op))) { return; }
+  ConstantInt * CInt = cast<ConstantInt>(CstInit->getOperand(Op));
+  uint64_t Val = CInt->getZExtValue();
+  unsigned nBytes = CInt->getBitWidth() / 8;
+  ASSERT( T->getPrimitiveSizeInBits() / 8 == nBytes && "Invalid number of bytes");
+  ASSERT( nBytes <= 8 );
+  
+  char buf[8]; /* Max size */
+  memset(buf, 0, sizeof(buf));
+  ASSERT(sys::IsLittleEndianHost);
+  #if 0
+  if(sys::IsBigEndianHost) {
+    u8 * p = (u8*)&Val;
+    for ( size_t i=0; i<8/2; ++i ) {
+      uint8_t tmp = p[i];
+      p[i] = p[8 - i - 1];
+      p[8 - i - 1] = tmp;
+    }
+  }
+  #endif
+  memcpy(buf, (u8*)&Val, nBytes);
+  //printf("adding:%8lX\n", Val);
+  std::string KeyWord(buf, nBytes);
+  std::string debugInfo = utils::getDebugInfo(CI);
+  //errs() << "debug:" << debugInfo << "\n";
+  utils::DictElt elmt = utils::DictElt(KeyWord, debugInfo);
+  utils::recordMultipleDictToInstr(getGlobalContext(), CI, elmt, S2U_DICT, true, false);
+  //errs() << *CI << "\n";
+  ++dictAdded;
+}
+
+void StrCompare2Unit::visitStructure(Constant * CstInit, const DataLayout & DL, CallInst & CI, size_t & dictAdded) {
+  // errs() << "struct:" << *CstInit->getType() << "\n";
+  // errs() << "GV=:" << *GV << "\n";
+  // errs() << "CstInit:" << *CstInit << "\n";
+  
+  /* Add src to dictionary */
+  StructType * ST = cast<StructType>(CstInit->getType()); ASSERT(ST);
+  ConstantStruct * CS = dyn_cast<ConstantStruct>(CstInit); 
+  if (!CS) { return; /* May be initialized to null */ }
+
+  /* see http://llvm.org/doxygen/WholeProgramDevirt_8cpp_source.html */
+  const StructLayout * SL = DL.getStructLayout(CS->getType()); ASSERT(SL);
+
+  for ( size_t i=0; i<ST->getNumElements(); ++i ) {
+    Type * T = ST->getElementType(i); ASSERT(T);
+    // TODO: support uninon,etc
+    if ( T->isStructTy() ) {
+      uint64_t EltOffset = SL->getElementOffset(i);
+      unsigned Op = SL->getElementContainingOffset(EltOffset);
+      ConstantStruct * CS = dyn_cast<ConstantStruct>(CstInit->getOperand(Op)); 
+      if (!CS) { continue; /* May be initialized to null */ }
+      visitStructure(CS, DL, CI, dictAdded);
+    } else if ( T->isIntegerTy() ) {
+      //errs() << "c:" << *T << "\n";
+      visitInteger(SL, T, i, CstInit, CI, dictAdded);
+    }
+  }
+}
+
+
 void StrCompare2Unit::harvestConstantStructs(Module &M, size_t & dictAdded) {
 
   /*
@@ -588,58 +662,7 @@ void StrCompare2Unit::harvestConstantStructs(Module &M, size_t & dictAdded) {
           Constant * CstInit = GV->getInitializer(); ASSERT (CstInit);
           if ( CstInit->getType()->getTypeID() != Type::StructTyID ) { continue; }
 
-          // errs() << "struct:" << *CstInit->getType() << "\n";
-          // errs() << "GV=:" << *GV << "\n";
-          // errs() << "CstInit:" << *CstInit << "\n";
-          
-          /* Add src to dictionary */
-          StructType * ST = cast<StructType>(CstInit->getType()); ASSERT(ST);
-          ConstantStruct * CS = dyn_cast<ConstantStruct>(CstInit); 
-          if (!CS) { continue; /* May be initialized to null */ }
-
-          /* see http://llvm.org/doxygen/WholeProgramDevirt_8cpp_source.html */
-          const StructLayout * SL = DL.getStructLayout(CS->getType()); ASSERT(SL);
-
-          size_t s = 0;
-          for ( size_t i=0; i<ST->getNumElements(); ++i ) {
-            Type * T = ST->getElementType(i); ASSERT(T);
-            if ( T->isIntegerTy() ) {
-              //errs() << "c:" << *T << "\n";
-              unsigned Op = SL->getElementContainingOffset(s);
-              // errs() << "isa1:" << isa<ConstantInt>(CstInit->getOperand(Op)) << "\n";
-              // errs() << "isa2:" << isa<Constant>(CstInit->getOperand(Op)) << "\n";
-              // errs() << "t:" << *CstInit->getOperand(Op)->getType() << "\n";
-              // errs() << "C:" << *cast<Constant>(CstInit->getOperand(Op)) << "\n";
-              // errs() << "s=" << s << "\n";
-              s += T->getPrimitiveSizeInBits() / 8;
-              if (!isa<ConstantInt>(CstInit->getOperand(Op))) { continue; }
-              ConstantInt * CInt = cast<ConstantInt>(CstInit->getOperand(Op));
-              uint64_t Val = CInt->getZExtValue();
-              unsigned nBytes = CInt->getBitWidth() / 8;
-              ASSERT( T->getPrimitiveSizeInBits() / 8 == nBytes && "Invalid number of bytes");
-              ASSERT( nBytes <= 8 );
-              
-              char buf[8]; /* Max size */
-              memset(buf, 0, sizeof(buf));
-              if(sys::IsBigEndianHost) {
-                u8 * p = (u8*)&Val;
-                for ( size_t i=0; i<8/2; ++i ) {
-                  uint8_t tmp = p[i];
-                  p[i] = p[8 - i - 1];
-                  p[8 - i - 1] = tmp;
-                }
-              }
-              memcpy(buf, (u8*)&Val, nBytes);
-              //printf("adding:%8lX\n", Val);
-              std::string KeyWord(buf, nBytes);
-              std::string debugInfo = utils::getDebugInfo(*CI);
-              //errs() << "debug:" << debugInfo << "\n";
-              utils::DictElt elmt = utils::DictElt(KeyWord, debugInfo);
-              utils::recordMultipleDictToInstr(getGlobalContext(), *CI, elmt, S2U_DICT, true, false);
-              //errs() << *CI << "\n";
-              ++dictAdded;
-            }
-          }
+          visitStructure(CstInit, DL, *CI, dictAdded);
         }
       }
     }

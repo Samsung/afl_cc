@@ -61,7 +61,7 @@ namespace utils {
 	  return oss.str();
 	}
 
-	inline size_t max_origin_multiple(void) { return 20; }
+	inline size_t max_origin_multiple(void) { return 100; }
 	extern void init_metanames(void);
 	extern bool is_llvm_dbg_intrinsic(llvm::Instruction & instr);
 	extern bool starts_with(const std::string& str, const std::string& prefix);
