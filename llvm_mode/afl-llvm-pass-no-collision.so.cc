@@ -369,6 +369,10 @@ bool AFLCoverage::runOnModule(Module &M) {
 
           /* nothing to do */
           ASSERT (0 && "Found switch instruction. Should be removed it passed -lowerswitch to opt");
+           
+        } else if ( isa<IndirectBrInst>(TI) ) {
+
+          /* that's fine */
 
         } else {
           errs() << "UNSUPPORTED Terminator:" << *TI << "\n";
