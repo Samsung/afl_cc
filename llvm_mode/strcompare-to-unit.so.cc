@@ -517,7 +517,7 @@ void StrCompare2Unit::addToDictionary(CallInst & CI, utils::DictElt elmt, size_t
     }
   }
 
-  ASSERT ( n<=1 );
+  //ASSERT ( n<=1 ); too conservative?
   dictAdded += n;
 }
 
