@@ -544,7 +544,7 @@ utils::DictElt StrCompare2Unit::getFromDictAndRemoveOriginal(CallInst & CI, bool
     }
   }
 
-  ASSERT ( list.size() <= 1 ); /* 0 or exactly 1 entry */
+  //ASSERT ( list.size() <= 1 ); /* 0 or exactly 1 entry */
   found = !!list.size();
   return found ? list[0] : utils::DictElt("","");
 }
